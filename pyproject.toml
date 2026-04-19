@@ -9,6 +9,8 @@ requires-python = ">=3.11"
 dependencies = [
     "PySide6",
     "mlx-whisper",
+    "silero-vad",
+    "soundfile",
 ]
 
 [tool.setuptools.packages.find]

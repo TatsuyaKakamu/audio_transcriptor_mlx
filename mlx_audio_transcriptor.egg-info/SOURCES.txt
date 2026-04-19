@@ -8,6 +8,7 @@ app/services/__init__.py
 app/services/file_naming.py
 app/services/markdown_writer.py
 app/services/transcriber.py
+app/services/vad.py
 app/ui/__init__.py
 app/ui/drop_area.py
 app/ui/main_window.py
@@ -21,3 +22,4 @@ mlx_audio_transcriptor.egg-info/top_level.txt
 tests/__init__.py
 tests/test_file_naming.py
 tests/test_markdown_writer.py
+tests/test_vad.py

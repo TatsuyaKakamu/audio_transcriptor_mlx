@@ -42,8 +42,20 @@ def transcribe(
     model: str,
     language: str,
     progress_callback: Callable[[int, int, float], None] | None = None,
+    use_vad: bool = True,
 ) -> TranscriptionResult:
     repo = _MODEL_REPO_MAP.get(model, f"mlx-community/whisper-{model}-mlx")
+
+    audio_input: str | object = str(source_path)
+    kept_intervals = None
+
+    if use_vad:
+        try:
+            from app.services.vad import preprocess_with_vad
+            audio_input, kept_intervals = preprocess_with_vad(source_path)
+        except Exception:
+            audio_input = str(source_path)
+            kept_intervals = None
 
     original_tqdm_cls = _tqdm_module.tqdm
     if progress_callback is not None:
@@ -52,14 +64,18 @@ def transcribe(
 
     try:
         result = mlx_whisper.transcribe(
-            str(source_path),
+            audio_input,
             path_or_hf_repo=repo,
             language=language,
+            temperature=0.0,
+            condition_on_previous_text=False,
+            no_speech_threshold=0.6,
         )
     finally:
         if progress_callback is not None:
             _tqdm_module.tqdm = original_tqdm_cls
-    segments = normalize_segments(result)
+
+    segments = normalize_segments(result, kept_intervals)
     return TranscriptionResult(
         source_path=source_path,
         language=language,
@@ -68,17 +84,23 @@ def transcribe(
     )
 
 
-def normalize_segments(result: dict) -> list[Segment]:
+def normalize_segments(
+    result: dict,
+    kept_intervals: list[tuple[float, float]] | None = None,
+) -> list[Segment]:
+    from app.services.vad import remap_timestamp
+
     raw = result.get("segments", [])
     segments: list[Segment] = []
     for seg in raw:
         text = seg.get("text", "").replace("\n", " ").strip()
         if not text:
             continue
-        segments.append(Segment(
-            start_sec=float(seg.get("start", 0.0)),
-            end_sec=float(seg.get("end", 0.0)),
-            text=text,
-        ))
+        start = float(seg.get("start", 0.0))
+        end = float(seg.get("end", 0.0))
+        if kept_intervals is not None:
+            start = remap_timestamp(start, kept_intervals)
+            end = remap_timestamp(end, kept_intervals)
+        segments.append(Segment(start_sec=start, end_sec=end, text=text))
     segments.sort(key=lambda s: s.start_sec)
     return segments
