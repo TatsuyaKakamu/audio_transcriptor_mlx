@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#5B8DEF"/>
+      <stop offset="50%" stop-color="#6C5CE7"/>
+      <stop offset="100%" stop-color="#9B59F6"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="6"/>
+      <feOffset dx="0" dy="4" result="offsetblur"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.22"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Rounded square background (macOS style squircle approximation) -->
+  <rect x="64" y="64" width="896" height="896" rx="205" ry="205" fill="url(#bg)"/>
+
+  <!-- Subtle inner highlight -->
+  <rect x="64" y="64" width="896" height="260" rx="205" ry="205" fill="#FFFFFF" opacity="0.08"/>
+
+  <!-- Waveform (left): 5 bars centered around y=512 -->
+  <g fill="#FFFFFF" filter="url(#shadow)">
+    <rect x="118" y="432" width="36" height="160" rx="18"/>
+    <rect x="170" y="368" width="36" height="288" rx="18"/>
+    <rect x="222" y="296" width="36" height="432" rx="18"/>
+    <rect x="274" y="360" width="36" height="304" rx="18"/>
+    <rect x="326" y="424" width="36" height="176" rx="18"/>
+  </g>
+
+  <!-- Arrow (middle): waveform → MD -->
+  <g fill="#FFFFFF" opacity="0.95" filter="url(#shadow)">
+    <rect x="400" y="492" width="76" height="40" rx="10"/>
+    <path d="M 468 452 L 536 512 L 468 572 Z"/>
+  </g>
+
+  <!-- "MD" text (right) -->
+  <g filter="url(#shadow)">
+    <text x="752" y="596"
+          fill="#FFFFFF"
+          font-family="'Helvetica Neue', Helvetica, Arial, sans-serif"
+          font-size="220"
+          font-weight="900"
+          text-anchor="middle"
+          letter-spacing="-4">MD</text>
+  </g>
+</svg>

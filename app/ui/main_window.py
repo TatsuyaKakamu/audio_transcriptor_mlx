@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -20,12 +21,15 @@ from app.workers.transcription_worker import TranscriptionWorker
 _LANGUAGES = [("Japanese (ja)", "ja"), ("English (en)", "en")]
 _MODELS = ["tiny", "base", "small", "medium", "large-v3"]
 _DEFAULT_MODEL = "medium"
+_APP_ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "app_icon.svg"
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Audio Transcript Tool")
+        if _APP_ICON_PATH.exists():
+            self.setWindowIcon(QIcon(str(_APP_ICON_PATH)))
         self._worker: TranscriptionWorker | None = None
         self._processing = False
         self._setup_ui()
