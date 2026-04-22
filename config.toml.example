@@ -1,0 +1,29 @@
+# mlx-audio-transcriptor 設定ファイル
+#
+# 配置先: ~/.config/mlx-audio-transcriptor/config.toml
+# 参照: GUI (python -m app.main) と ヘッドレス CLI (python -m app.cli scan) の両方
+#
+# 全ての項目は省略可。未指定ならコード内のデフォルトが使われる。
+
+# 文字起こしの既定言語 ("ja" / "en" など ISO 639-1)
+language = "ja"
+
+# 既定モデル名 ("tiny" / "base" / "small" / "medium" / "large-v3" もしくは任意)
+# 未登録名は mlx-community/whisper-<name>-mlx として解決される
+model = "medium"
+
+# 監視するフォルダ（CLI scan モードの対象）
+# ~ は自動展開される
+watch_dir = "~/Downloads"
+
+# 対象とする拡張子（小文字、ドット付き推奨）
+extensions = [".wav", ".mp3"]
+
+# ファイル書き込み完了を待つための安定判定秒数
+# この秒数だけ size / mtime が変化しなければ転記対象と見なす
+file_stability_seconds = 3.0
+
+# true の場合、Markdown 出力成功後に元の音声ファイルを macOS のゴミ箱へ移動する
+# false にすると元ファイルは残る（その場合、再スキャン時は *.transcript.md の
+# 有無で既処理判定される）
+trash_source_after_success = true

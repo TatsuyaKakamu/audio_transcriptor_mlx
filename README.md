@@ -33,6 +33,20 @@ python -m app.main
 
 複数ファイルを同時にドロップ可。逐次処理。
 
+## Downloads フォルダの自動監視（launchd）
+
+iPhone から AirDrop などで `~/Downloads` に音声が入ったら GUI を開かずに自動で文字起こしし、元ファイルをゴミ箱へ送るバックグラウンドモードがあります。セットアップ手順は [`docs/mac-watcher-setup.md`](docs/mac-watcher-setup.md) を参照してください。
+
+概要:
+
+```bash
+cp config.toml.example ~/.config/mlx-audio-transcriptor/config.toml
+./scripts/install-watcher.sh          # 登録
+./scripts/uninstall-watcher.sh        # 解除
+```
+
+設定ファイル `~/.config/mlx-audio-transcriptor/config.toml` は GUI の既定言語／モデル選択にも反映されます。
+
 ## 処理の流れ
 
 1. **VAD 前処理** — silero-vad で無音区間を除去し、発話区間のみ連結した PCM を生成する
@@ -83,7 +97,9 @@ model: medium
 ```
 mlx-audio-transcriptor/
 ├── app/
-│   ├── main.py                        # エントリーポイント
+│   ├── main.py                        # GUI エントリーポイント
+│   ├── cli.py                         # ヘッドレス CLI（launchd から呼ばれる）
+│   ├── config.py                      # TOML 設定ロード（GUI/CLI 共用）
 │   ├── ui/
 │   │   ├── main_window.py             # メインウィンドウ（プログレスバー・ログペイン）
 │   │   └── drop_area.py               # D&D ウィジェット
@@ -96,10 +112,19 @@ mlx-audio-transcriptor/
 │   │   └── transcription_worker.py    # バックグラウンド処理（進捗通知）
 │   └── models/
 │       └── types.py                   # Segment / TranscriptionResult
+├── scripts/
+│   ├── com.mlx-audio-transcriptor.watcher.plist.template
+│   ├── install-watcher.sh             # LaunchAgent 設置
+│   └── uninstall-watcher.sh
+├── docs/
+│   └── mac-watcher-setup.md           # Downloads 監視セットアップ手順
+├── config.toml.example
 └── tests/
     ├── test_file_naming.py
     ├── test_markdown_writer.py
-    └── test_vad.py
+    ├── test_vad.py
+    ├── test_config.py
+    └── test_cli_scan.py
 ```
 
 ## テスト
@@ -114,6 +139,7 @@ pytest
 - [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) — 音声文字起こし（Apple Silicon MLX）
 - [silero-vad](https://github.com/snakers4/silero-vad) — 無音区間検出（VAD 前処理）
 - [soundfile](https://python-soundfile.readthedocs.io/) — 音声ファイル読み込み
+- [Send2Trash](https://github.com/arsenetar/send2trash) — 自動監視モードで元ファイルをゴミ箱へ送る
 
 ## 制限事項
 
