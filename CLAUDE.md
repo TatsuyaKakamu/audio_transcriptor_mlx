@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Python 3.11 以上
 - 仮想環境: `.venv`
 - `ffmpeg`（mlx-whisper の音声デコードに必要、`brew install ffmpeg`）
+- Ollama（議事録生成を使う場合のみ。`brew install ollama` + `ollama pull <model>`）
 
 ## コマンド
 
@@ -56,6 +57,14 @@ DropArea (DnD) → MainWindow → TranscriptionWorker (QThread)
                           file_naming.resolve_output_path()
                                   ↓
                           markdown_writer.write()
+                                  ↓ ([minutes].enabled なら)
+                          minutes.run_for()
+                              ↓
+                          minutes_generator.generate_minutes()  →  Ollama POST /api/generate (format=json)
+                              ↓
+                          minutes_writer.build_minutes_markdown()
+                              ↓
+                          <YYYY-MM-DD>_<topic>.md （on_log でログペインへ通知）
 ```
 
 ### データフロー（CLI / launchd）
@@ -74,12 +83,16 @@ _transcribe_one()
     │       └ tqdm を一時差し替えて 25/50/75% で notify
     ├─ markdown_writer.write()
     ├─ notifier.notify("文字起こし完了", …)
+    ├─ [minutes].enabled なら
+    │     minutes.run_for()  →  minutes_generator → Ollama → minutes_writer
+    │       ├─ notifier.notify("議事録生成中…") / notifier.notify("議事録生成完了") / notifier.notify("議事録生成失敗")
+    │       └─ <YYYY-MM-DD>_<topic>.md を書き出す（失敗しても以降の処理に影響しない）
     └─ trash_source_after_success が真なら send2trash
 ```
 
 ### 設定 (`~/.config/mlx-audio-transcriptor/config.toml`)
 
-`app/config.py` の `load_config()` が GUI / CLI 共通で TOML を読む。ファイルが無ければコード内デフォルトを使う。既知キー: `language`, `model`, `watch_dir`, `extensions`, `file_stability_seconds`, `trash_source_after_success`。GUI 起動時にこれを読んでコンボボックスの初期値を設定する。`install-watcher.sh` が未存在時に `config.toml.example` を自動コピーする。
+`app/config.py` の `load_config()` が GUI / CLI 共通で TOML を読む。ファイルが無ければコード内デフォルトを使う。既知キー: `language`, `model`, `watch_dir`, `extensions`, `file_stability_seconds`, `trash_source_after_success`、および `[minutes]` テーブル（`enabled`, `ollama_host`, `model`, `prompt_language`, `num_ctx`, `max_input_chars`, `request_timeout_seconds`）。GUI 起動時にこれを読んでコンボボックスの初期値を設定する。`install-watcher.sh` が未存在時に `config.toml.example` を自動コピーする。
 
 ### 通知
 
@@ -98,6 +111,14 @@ _transcribe_one()
 
 `services/vad.py` は Silero VAD でファイルを前処理し、無音区間を除去した PCM 配列と元タイムラインへの対応区間リストを返す。`transcriber.py` の `normalize_segments()` が `remap_timestamp()` を使ってセグメントのタイムスタンプを元の時刻に戻す。VAD が失敗した場合はファイルパス文字列にフォールバックして処理を続行する。
 
+### 議事録生成（Ollama）
+
+- `services/minutes.py` がオーケストレーター。`run_for()` は `MinutesGenerationError` も予期せぬ例外も握り潰して `None` を返す（best-effort）。`cfg.enabled=False` なら即 `None` を返してスキップ
+- `services/minutes_generator.py` が Ollama に `POST /api/generate` を発行（`format=json`、`stream=False`、`options.num_ctx`）。レスポンスの ` ```json ... ``` ` フェンスを許容し `{"topic", "minutes_markdown"}` を取り出す。`max_input_chars` 超過は先頭から切り詰めて WARN ログを出す。Python 依存は stdlib `urllib.request` のみ
+- `services/minutes_writer.py` が `sanitize_topic`（パス区切り文字・制御文字除去、空白→`_`）→ `derive_minutes_filename`（音声ファイル mtime 基準の日付を使用）→ 衝突時 `.N.md` 採番でファイルを書く
+- 入力テキストは `minutes_generator.transcript_plain_text()` がセグメントテキストを改行連結して生成（タイムスタンプは除外）
+- GUI は `on_log` 経由でログペインへ、CLI は `notifier.notify` 経由で macOS 通知センターへ「議事録生成中…」「議事録生成完了」「議事録生成失敗」を送る
+
 ### モデル解決
 
 `transcriber.py` の `_MODEL_REPO_MAP` でモデル名を HuggingFace リポジトリ名にマッピングする。未登録名は `mlx-community/whisper-{name}-mlx` として自動補完する。
@@ -107,6 +128,8 @@ _transcribe_one()
 `file_naming.resolve_output_path()` は `meeting.wav` → `meeting.transcript.md` を生成し、衝突時は `meeting.transcript.1.md`, `meeting.transcript.2.md` と最小未使用番号で採番する。
 
 ## 出力フォーマット
+
+### トランスクリプト（`*.transcript.md`）
 
 ```markdown
 ---
@@ -120,11 +143,30 @@ model: medium
 - [01:02:03.456 - 01:02:08.000] 1時間超えは HH:MM:SS.mmm 形式
 ```
 
+### 議事録（`<YYYY-MM-DD>_<topic>.md`）
+
+```markdown
+---
+date: 2026-05-08
+source_audio: meeting.wav
+transcript: meeting.transcript.md
+language: ja
+whisper_model: medium
+ollama_model: gemma4
+topic: 予算会議
+---
+
+（Ollama が生成した本文 Markdown）
+
+---
+原文書き起こし: [meeting.transcript.md](meeting.transcript.md)
+```
+
 ## テスト対象モジュール
 
 ロジック層（`services/`）は GUI なしで単体テスト可能。`tests/conftest.py` が `mlx_whisper` / `tqdm` のスタブを差し込むため、macOS 以外の CI 環境でもロジック層テストが動く。
 
-テストファイル: `test_file_naming.py`, `test_markdown_writer.py`, `test_segment_merger.py`, `test_config.py`, `test_cli_scan.py`, `test_notifier.py`, `test_progress.py`。`transcriber.py` と `vad.py` は `mlx-whisper` / `silero_vad` への依存があるためテスト外。
+テストファイル: `test_file_naming.py`, `test_markdown_writer.py`, `test_segment_merger.py`, `test_config.py`, `test_cli_scan.py`, `test_notifier.py`, `test_progress.py`, `test_minutes_generator.py`, `test_minutes_orchestrator.py`, `test_minutes_writer.py`。`transcriber.py` と `vad.py` は `mlx-whisper` / `silero_vad` への依存があるためテスト外。`minutes_generator.py` は autouse fixture `_block_real_http` が実 HTTP を遮断するためロジック単体でテスト可能。
 
 ## 現時点の制限
 

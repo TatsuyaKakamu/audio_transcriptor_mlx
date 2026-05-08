@@ -23,7 +23,7 @@ def _setup_paths(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def _enabled_cfg(**overrides) -> MinutesConfig:
-    base = dict(enabled=True, model="gemma3", request_timeout_seconds=10.0)
+    base = dict(enabled=True, model="gemma4", request_timeout_seconds=10.0)
     base.update(overrides)
     return MinutesConfig(**base)
 
@@ -66,7 +66,7 @@ def test_run_for_writes_file_on_success(tmp_path, monkeypatch) -> None:
     assert out.topic_sanitized == "予算会議"
     content = out.output_path.read_text(encoding="utf-8")
     assert "topic: 予算会議" in content
-    assert "ollama_model: gemma3" in content
+    assert "ollama_model: gemma4" in content
     assert "# 予算会議" in content
 
 

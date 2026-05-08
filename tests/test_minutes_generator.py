@@ -7,12 +7,15 @@ from pathlib import Path
 
 import pytest
 
+from http.client import HTTPException
+
 from app.config import MinutesConfig
 from app.models.types import Segment, TranscriptionResult
 from app.services import minutes_generator
 from app.services.minutes_generator import (
     GeneratedMinutes,
     MinutesGenerationError,
+    _strip_json_fence,
     generate_minutes,
     transcript_plain_text,
 )
@@ -22,7 +25,7 @@ def _cfg(**overrides) -> MinutesConfig:
     base = dict(
         enabled=True,
         ollama_host="http://localhost:11434",
-        model="gemma3",
+        model="gemma4",
         prompt_language="ja",
         max_input_chars=60000,
         request_timeout_seconds=10.0,
@@ -70,10 +73,11 @@ def test_generate_minutes_calls_ollama_with_correct_payload(monkeypatch) -> None
     out = generate_minutes("transcript-text", language="ja", cfg=cfg)
 
     assert captured["url"] == "http://example.local:1234/api/generate"
-    assert captured["payload"]["model"] == "gemma3"
+    assert captured["payload"]["model"] == "gemma4"
     assert captured["payload"]["stream"] is False
     assert captured["payload"]["format"] == "json"
     assert "transcript-text" in captured["payload"]["prompt"]
+    assert captured["payload"]["options"]["num_ctx"] == 32768
     assert captured["timeout"] == 10.0
     assert out == GeneratedMinutes(topic="予算", body_markdown="# 予算\n本文")
 
@@ -156,3 +160,48 @@ def test_generate_minutes_uses_english_prompts(monkeypatch) -> None:
     generate_minutes("hello world", language="en", cfg=_cfg(prompt_language="en"))
     assert "TRANSCRIPT BEGIN" in captured["payload"]["prompt"]
     assert "meeting secretary" in captured["payload"]["system"]
+
+
+def test_generate_minutes_num_ctx_zero_omits_from_options(monkeypatch) -> None:
+    captured = {}
+
+    def fake_post(url, payload, timeout):
+        captured["payload"] = payload
+        return {"response": json.dumps({"topic": "x", "minutes_markdown": "# x"})}
+
+    monkeypatch.setattr(minutes_generator, "_http_post_json", fake_post)
+    generate_minutes("text", language="ja", cfg=_cfg(num_ctx=0))
+    assert "num_ctx" not in captured["payload"]["options"]
+
+
+def test_generate_minutes_json_fence_is_tolerated(monkeypatch) -> None:
+    fenced = '```json\n{"topic": "フェンス", "minutes_markdown": "# フェンス"}\n```'
+    monkeypatch.setattr(
+        minutes_generator,
+        "_http_post_json",
+        lambda *a, **k: {"response": fenced},
+    )
+    out = generate_minutes("x", language="ja", cfg=_cfg())
+    assert out.topic == "フェンス"
+
+
+def test_generate_minutes_http_exception_raises(monkeypatch) -> None:
+    def fake_post(*a, **k):
+        raise HTTPException("remote disconnected")
+
+    monkeypatch.setattr(minutes_generator, "_http_post_json", fake_post)
+    with pytest.raises(MinutesGenerationError):
+        generate_minutes("x", language="ja", cfg=_cfg())
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ('```json\n{"a":1}\n```', '{"a":1}'),
+        ('```\n{"a":1}\n```', '{"a":1}'),
+        ('  {"a":1}  ', '{"a":1}'),
+        ('{"a":1}', '{"a":1}'),
+    ],
+)
+def test_strip_json_fence(raw: str, expected: str) -> None:
+    assert _strip_json_fence(raw) == expected

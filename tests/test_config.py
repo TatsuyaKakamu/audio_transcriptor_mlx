@@ -54,9 +54,12 @@ def test_malformed_toml_falls_back_to_defaults(tmp_path: Path) -> None:
 def test_minutes_defaults_when_missing(tmp_path: Path) -> None:
     cfg = load_config(tmp_path / "missing.toml")
     assert cfg.minutes == MinutesConfig()
-    assert cfg.minutes.enabled is False
-    assert cfg.minutes.model == "gemma3"
+    assert cfg.minutes.enabled is True
+    assert cfg.minutes.model == "gemma4"
     assert cfg.minutes.ollama_host == "http://localhost:11434"
+    assert cfg.minutes.max_input_chars == 30000
+    assert cfg.minutes.request_timeout_seconds == 600.0
+    assert cfg.minutes.num_ctx == 32768
 
 
 def test_minutes_partial_override(tmp_path: Path) -> None:
@@ -84,6 +87,7 @@ def test_minutes_full_override(tmp_path: Path) -> None:
                 'prompt_language = "en"',
                 "max_input_chars = 12345",
                 "request_timeout_seconds = 30.5",
+                "num_ctx = 16384",
                 "",
             ]
         ),
@@ -97,4 +101,5 @@ def test_minutes_full_override(tmp_path: Path) -> None:
         prompt_language="en",
         max_input_chars=12345,
         request_timeout_seconds=30.5,
+        num_ctx=16384,
     )

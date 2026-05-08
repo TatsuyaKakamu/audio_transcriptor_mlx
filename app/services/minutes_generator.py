@@ -5,6 +5,7 @@ import logging
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from http.client import HTTPException
 
 from app.config import MinutesConfig
 from app.models.types import TranscriptionResult
@@ -65,6 +66,16 @@ _USER_PROMPT_EN = """Below is a meeting transcript. Produce minutes as JSON.
 ----- TRANSCRIPT END -----"""
 
 
+def _strip_json_fence(s: str) -> str:
+    """Remove ```json ... ``` fences that some models add despite format:json."""
+    s = s.strip()
+    if s.startswith("```"):
+        s = s.split("\n", 1)[1] if "\n" in s else s[3:]
+        if s.endswith("```"):
+            s = s[:-3]
+    return s.strip()
+
+
 def _build_prompts(transcript_text: str, prompt_language: str) -> tuple[str, str]:
     if prompt_language == "en":
         return _SYSTEM_PROMPT_EN, _USER_PROMPT_EN.format(transcript=transcript_text)
@@ -101,18 +112,21 @@ def generate_minutes(
     system_prompt, user_prompt = _build_prompts(text, cfg.prompt_language)
 
     url = cfg.ollama_host.rstrip("/") + "/api/generate"
+    options: dict[str, object] = {"temperature": 0.2}
+    if cfg.num_ctx > 0:
+        options["num_ctx"] = cfg.num_ctx
     payload = {
         "model": cfg.model,
         "prompt": user_prompt,
         "system": system_prompt,
         "stream": False,
         "format": "json",
-        "options": {"temperature": 0.2},
+        "options": options,
     }
 
     try:
         response = _http_post_json(url, payload, cfg.request_timeout_seconds)
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
+    except (urllib.error.URLError, TimeoutError, OSError, HTTPException, UnicodeDecodeError) as e:
         raise MinutesGenerationError(f"Ollama request failed: {e}") from e
     except json.JSONDecodeError as e:
         raise MinutesGenerationError(f"Ollama returned non-JSON envelope: {e}") from e
@@ -122,7 +136,7 @@ def generate_minutes(
         raise MinutesGenerationError("Ollama response missing 'response' field")
 
     try:
-        parsed = json.loads(raw)
+        parsed = json.loads(_strip_json_fence(raw))
     except json.JSONDecodeError as e:
         raise MinutesGenerationError(f"Ollama 'response' is not valid JSON: {e}") from e
 

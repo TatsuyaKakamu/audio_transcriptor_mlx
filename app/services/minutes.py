@@ -61,12 +61,12 @@ def run_for(
     except MinutesGenerationError as e:
         logger.warning("minutes generation failed for %s: %s", audio_path, e)
         _emit_log(on_log, "WARN", f"議事録生成失敗: {e}")
-        _emit_notify(notify, "議事録生成失敗", audio_path.name)
+        _emit_notify(notify, "議事録生成失敗", f"{audio_path.name}: {str(e)[:120].replace(chr(10), ' ')}")
         return None
     except Exception as e:  # noqa: BLE001 — never propagate
         logger.exception("unexpected error while generating minutes for %s", audio_path)
         _emit_log(on_log, "ERROR", f"議事録生成失敗(予期せぬエラー): {e}")
-        _emit_notify(notify, "議事録生成失敗", audio_path.name)
+        _emit_notify(notify, "議事録生成失敗", f"{audio_path.name}: {str(e)[:120].replace(chr(10), ' ')}")
         return None
 
     try:
@@ -88,7 +88,7 @@ def run_for(
     except Exception as e:  # noqa: BLE001
         logger.exception("failed to write minutes file for %s", audio_path)
         _emit_log(on_log, "ERROR", f"議事録書き出し失敗: {e}")
-        _emit_notify(notify, "議事録生成失敗", audio_path.name)
+        _emit_notify(notify, "議事録生成失敗", f"{audio_path.name}: {str(e)[:120].replace(chr(10), ' ')}")
         return None
 
     _emit_log(on_log, "INFO", f"Saved minutes: {output_path}")

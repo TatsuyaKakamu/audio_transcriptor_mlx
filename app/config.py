@@ -14,12 +14,13 @@ _DEFAULT_EXTENSIONS: frozenset[str] = frozenset({".wav", ".mp3"})
 
 @dataclass(frozen=True)
 class MinutesConfig:
-    enabled: bool = False
+    enabled: bool = True
     ollama_host: str = "http://localhost:11434"
-    model: str = "gemma3"
+    model: str = "gemma4"
     prompt_language: str = "ja"
-    max_input_chars: int = 60000
-    request_timeout_seconds: float = 180.0
+    max_input_chars: int = 30000
+    request_timeout_seconds: float = 600.0
+    num_ctx: int = 32768
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ def _parse_minutes(data: dict) -> MinutesConfig:
         request_timeout_seconds=float(
             data.get("request_timeout_seconds", defaults.request_timeout_seconds)
         ),
+        num_ctx=int(data.get("num_ctx", defaults.num_ctx)),
     )
 
 

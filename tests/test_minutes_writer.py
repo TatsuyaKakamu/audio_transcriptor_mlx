@@ -77,13 +77,13 @@ def test_build_minutes_markdown_frontmatter(tmp_path: Path) -> None:
         transcript_path=transcript,
         language="ja",
         whisper_model="medium",
-        ollama_model="gemma3",
+        ollama_model="gemma4",
     )
     assert content.startswith("---\n")
     assert "date: 2026-05-08" in content
     assert "source_audio: meeting.wav" in content
     assert "transcript: meeting.transcript.md" in content
-    assert "ollama_model: gemma3" in content
+    assert "ollama_model: gemma4" in content
     assert "topic: 予算会議" in content
     assert "# 予算会議" in content
     assert "[meeting.transcript.md](meeting.transcript.md)" in content
