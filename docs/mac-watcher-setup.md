@@ -24,7 +24,9 @@ pip install -r requirements.txt
 
 ---
 
-## 2. 設定ファイルを用意
+## 2. （任意）設定をカスタマイズする
+
+このステップは任意です。次の §3 でインストールスクリプトを実行すると `~/.config/mlx-audio-transcriptor/config.toml` が自動的に用意されます。デフォルト値（`config.toml.example` と同じ）で良ければスキップして §3 へ進んでください。言語・モデル・監視先などを初回起動前に変えたい場合だけ、以下の手順で先に作成・編集します。
 
 ```bash
 mkdir -p ~/.config/mlx-audio-transcriptor
@@ -47,8 +49,6 @@ trash_source_after_success = true
 - `extensions`: 対象拡張子
 - `file_stability_seconds`: 書き込み完了判定の秒数（AirDrop 中に処理を始めないためのガード）
 - `trash_source_after_success`: `true` なら Markdown 生成成功後に音源をゴミ箱へ移動。Finder の "Put Back" で元に戻せます
-
-設定ファイルが無くてもコード側のデフォルトで動きます（`config.toml.example` と同じ値）。
 
 ---
 

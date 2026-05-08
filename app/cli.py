@@ -10,7 +10,7 @@ from pathlib import Path
 import send2trash
 
 from app.config import AppConfig, load_config
-from app.services import file_naming, markdown_writer, transcriber
+from app.services import file_naming, markdown_writer, notifier, progress, transcriber
 
 logger = logging.getLogger("mlx_audio_transcriptor.cli")
 
@@ -58,9 +58,12 @@ def _wait_until_stable(path: Path, stability_seconds: float) -> bool:
 
 def _transcribe_one(path: Path, cfg: AppConfig) -> None:
     logger.info("transcribing: %s", path)
-    result = transcriber.transcribe(path, cfg.model, cfg.language)
+    notifier.notify("文字起こし開始", path.name)
+    callback = progress.make_milestone_callback(path.name)
+    result = transcriber.transcribe(path, cfg.model, cfg.language, progress_callback=callback)
     output_path = file_naming.resolve_output_path(path)
     markdown_writer.write(result, output_path)
+    notifier.notify("文字起こし完了", f"{path.name} → {output_path.name}")
     logger.info("wrote markdown: %s", output_path)
 
     if cfg.trash_source_after_success:
