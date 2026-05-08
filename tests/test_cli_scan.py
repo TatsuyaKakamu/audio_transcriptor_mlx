@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app import cli
-from app.config import AppConfig
+from app.config import AppConfig, MinutesConfig
 from app.models.types import TranscriptionResult
 
 
@@ -152,3 +152,46 @@ def test_missing_watch_dir_is_not_error(tmp_path: Path, patched) -> None:
     )
     assert rc == 0
     transcribe_mock.assert_not_called()
+
+
+def test_minutes_skipped_when_disabled(tmp_path: Path, patched, monkeypatch) -> None:
+    minutes_mock = MagicMock()
+    monkeypatch.setattr("app.cli.minutes.run_for", minutes_mock)
+    (tmp_path / "meeting.wav").write_bytes(b"fake")
+
+    cli.cmd_scan(cfg=_cfg(tmp_path), lock_path=tmp_path / "scan.lock")
+
+    minutes_mock.assert_not_called()
+
+
+def test_minutes_invoked_when_enabled(tmp_path: Path, patched, monkeypatch) -> None:
+    minutes_mock = MagicMock(return_value=None)
+    monkeypatch.setattr("app.cli.minutes.run_for", minutes_mock)
+    audio = tmp_path / "meeting.wav"
+    audio.write_bytes(b"fake")
+
+    cfg = _cfg(tmp_path, minutes=MinutesConfig(enabled=True))
+    cli.cmd_scan(cfg=cfg, lock_path=tmp_path / "scan.lock")
+
+    minutes_mock.assert_called_once()
+    kwargs = minutes_mock.call_args.kwargs
+    assert kwargs["audio_path"] == audio
+    assert kwargs["transcript_path"] == tmp_path / "meeting.transcript.md"
+    assert kwargs["language"] == "ja"
+    assert kwargs["whisper_model"] == "medium"
+    assert kwargs["cfg"].enabled is True
+    # 通知コールバックは notifier.notify が渡される
+    assert kwargs["notify"] is not None
+
+
+def test_minutes_none_return_does_not_block_trash(tmp_path: Path, patched, monkeypatch) -> None:
+    _, trash_mock = patched
+    monkeypatch.setattr("app.cli.minutes.run_for", MagicMock(return_value=None))
+    audio = tmp_path / "meeting.wav"
+    audio.write_bytes(b"fake")
+
+    cfg = _cfg(tmp_path, minutes=MinutesConfig(enabled=True))
+    rc = cli.cmd_scan(cfg=cfg, lock_path=tmp_path / "scan.lock")
+
+    assert rc == 0
+    trash_mock.assert_called_once_with(str(audio))

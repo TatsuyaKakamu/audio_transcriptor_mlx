@@ -119,7 +119,7 @@ class MainWindow(QMainWindow):
         self._progress_bar.setValue(0)
         self._progress_bar.setVisible(True)
         self._status_label.setText(f"{len(files)}件中 1件目を処理中")
-        self._worker = TranscriptionWorker(files, language, model)
+        self._worker = TranscriptionWorker(files, language, model, self._config)
         self._worker.log_message.connect(self._append_log)
         self._worker.status_update.connect(self._status_label.setText)
         self._worker.progress.connect(self._on_progress)

@@ -3,7 +3,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from app.services import file_naming, markdown_writer, transcriber
+from app.config import AppConfig
+from app.services import file_naming, markdown_writer, minutes, minutes_generator, transcriber
 
 
 def _fmt_sec(sec: float) -> str:
@@ -17,11 +18,14 @@ class TranscriptionWorker(QThread):
     progress = Signal(float)                   # overall_percent 0-100
     finished = Signal(bool, int, int)          # had_errors, success_count, failure_count
 
-    def __init__(self, files: list[Path], language: str, model: str) -> None:
+    def __init__(
+        self, files: list[Path], language: str, model: str, cfg: AppConfig
+    ) -> None:
         super().__init__()
         self._files = files
         self._language = language
         self._model = model
+        self._cfg = cfg
 
     def run(self) -> None:
         total_files = len(self._files)
@@ -62,5 +66,18 @@ class TranscriptionWorker(QThread):
                 had_errors = True
                 failure_count += 1
                 self.log_message.emit("ERROR", f"Failed: {path} — {e}")
+                continue
+
+            if self._cfg.minutes.enabled:
+                self.status_update.emit(f"{total_files}件中 {i}件目: 議事録生成中…")
+                minutes.run_for(
+                    transcript_path=output_path,
+                    audio_path=path,
+                    transcript_text=minutes_generator.transcript_plain_text(result),
+                    language=self._language,
+                    whisper_model=self._model,
+                    cfg=self._cfg.minutes,
+                    on_log=self.log_message.emit,
+                )
 
         self.finished.emit(had_errors, success_count, failure_count)

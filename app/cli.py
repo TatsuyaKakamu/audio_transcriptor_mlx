@@ -10,11 +10,21 @@ from pathlib import Path
 import send2trash
 
 from app.config import AppConfig, load_config
-from app.services import file_naming, markdown_writer, notifier, progress, transcriber
+from app.services import (
+    file_naming,
+    markdown_writer,
+    minutes,
+    minutes_generator,
+    notifier,
+    progress,
+    transcriber,
+)
 
 logger = logging.getLogger("mlx_audio_transcriptor.cli")
 
 _LOCK_PATH = Path.home() / ".cache" / "mlx-audio-transcriptor" / "scan.lock"
+_LOG_DIR = Path.home() / "Library" / "Logs" / "mlx-audio-transcriptor"
+_CLI_LOG_PATH = _LOG_DIR / "cli.log"
 _STABILITY_TIMEOUT_SEC = 120.0
 _STABILITY_POLL_SEC = 1.0
 
@@ -65,6 +75,17 @@ def _transcribe_one(path: Path, cfg: AppConfig) -> None:
     markdown_writer.write(result, output_path)
     notifier.notify("文字起こし完了", f"{path.name} → {output_path.name}")
     logger.info("wrote markdown: %s", output_path)
+
+    if cfg.minutes.enabled:
+        minutes.run_for(
+            transcript_path=output_path,
+            audio_path=path,
+            transcript_text=minutes_generator.transcript_plain_text(result),
+            language=cfg.language,
+            whisper_model=cfg.model,
+            cfg=cfg.minutes,
+            notify=notifier.notify,
+        )
 
     if cfg.trash_source_after_success:
         try:
@@ -122,11 +143,24 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _setup_logging() -> None:
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    stream = logging.StreamHandler()
+    stream.setFormatter(fmt)
+    root.addHandler(stream)
+    try:
+        _LOG_DIR.mkdir(parents=True, exist_ok=True)
+        file_h = logging.FileHandler(_CLI_LOG_PATH, mode="a", encoding="utf-8")
+        file_h.setFormatter(fmt)
+        root.addHandler(file_h)
+    except OSError as e:
+        root.warning("could not open cli log file %s: %s", _CLI_LOG_PATH, e)
+
+
 def main(argv: list[str] | None = None) -> int:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
+    _setup_logging()
     args = _build_parser().parse_args(argv)
     if args.command == "scan":
         return cmd_scan()
