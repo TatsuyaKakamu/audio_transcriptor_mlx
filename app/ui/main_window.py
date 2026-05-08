@@ -15,13 +15,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.config import load_config
 from app.services import notifier
 from app.ui.drop_area import SUPPORTED_EXTENSIONS, DropArea
 from app.workers.transcription_worker import TranscriptionWorker
 
 _LANGUAGES = [("Japanese (ja)", "ja"), ("English (en)", "en")]
 _MODELS = ["tiny", "base", "small", "medium", "large-v3"]
-_DEFAULT_MODEL = "medium"
 _APP_ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "app_icon.svg"
 
 
@@ -33,6 +33,7 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(str(_APP_ICON_PATH)))
         self._worker: TranscriptionWorker | None = None
         self._processing = False
+        self._config = load_config()
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -53,13 +54,17 @@ class MainWindow(QMainWindow):
         self._lang_combo = QComboBox()
         for label, code in _LANGUAGES:
             self._lang_combo.addItem(label, code)
+        lang_idx = self._lang_combo.findData(self._config.language)
+        if lang_idx >= 0:
+            self._lang_combo.setCurrentIndex(lang_idx)
         settings.addWidget(self._lang_combo)
         settings.addSpacing(20)
         settings.addWidget(QLabel("モデル:"))
         self._model_combo = QComboBox()
         for m in _MODELS:
             self._model_combo.addItem(m)
-        self._model_combo.setCurrentText(_DEFAULT_MODEL)
+        if self._config.model in _MODELS:
+            self._model_combo.setCurrentText(self._config.model)
         settings.addWidget(self._model_combo)
         settings.addStretch()
         root.addLayout(settings)

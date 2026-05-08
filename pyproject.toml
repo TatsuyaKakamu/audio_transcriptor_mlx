@@ -11,6 +11,7 @@ dependencies = [
     "mlx-whisper",
     "silero-vad",
     "soundfile",
+    "send2trash",
 ]
 
 [tool.setuptools.packages.find]

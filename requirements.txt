@@ -2,3 +2,4 @@ PySide6
 mlx-whisper
 silero-vad
 soundfile
+send2trash
