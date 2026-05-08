@@ -7,10 +7,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - macOS Apple Silicon 必須
 - Python 3.11 以上
 - 仮想環境: `.venv`
+- `ffmpeg`（mlx-whisper の音声デコードに必要、`brew install ffmpeg`）
 
 ## コマンド
 
 ```bash
+# 事前準備（システムに ffmpeg が無ければ）
+brew install ffmpeg
+
 # セットアップ
 python -m venv .venv
 source .venv/bin/activate

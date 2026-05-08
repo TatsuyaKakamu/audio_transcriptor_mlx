@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.config import load_config
+from app.services import notifier
 from app.ui.drop_area import SUPPORTED_EXTENSIONS, DropArea
 from app.workers.transcription_worker import TranscriptionWorker
 
@@ -128,11 +129,19 @@ class MainWindow(QMainWindow):
     def _on_progress(self, overall_percent: float) -> None:
         self._progress_bar.setValue(int(overall_percent * 10))
 
-    def _on_finished(self, had_errors: bool) -> None:
+    def _on_finished(self, had_errors: bool, success: int, failure: int) -> None:
         self._processing = False
         self._progress_bar.setValue(1000)
         self._progress_bar.setVisible(False)
         self._status_label.setText("エラーあり" if had_errors else "完了")
+
+        if failure == 0:
+            body = f"{success}件 成功"
+        elif success == 0:
+            body = f"{failure}件 失敗"
+        else:
+            body = f"{success + failure}件中 {success}件 成功 / {failure}件 失敗"
+        notifier.notify("文字起こし完了", body)
 
     def _append_log(self, level: str, message: str) -> None:
         self._log_view.append(f"[{level}] {message}")

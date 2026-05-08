@@ -15,7 +15,7 @@ class TranscriptionWorker(QThread):
     log_message = Signal(str, str)             # level, message
     status_update = Signal(str)
     progress = Signal(float)                   # overall_percent 0-100
-    finished = Signal(bool)                    # had_errors
+    finished = Signal(bool, int, int)          # had_errors, success_count, failure_count
 
     def __init__(self, files: list[Path], language: str, model: str) -> None:
         super().__init__()
@@ -26,6 +26,8 @@ class TranscriptionWorker(QThread):
     def run(self) -> None:
         total_files = len(self._files)
         had_errors = False
+        success_count = 0
+        failure_count = 0
 
         for i, path in enumerate(self._files, 1):
             self.log_message.emit("INFO", f"Start: {path}")
@@ -55,8 +57,10 @@ class TranscriptionWorker(QThread):
                 output_path = file_naming.resolve_output_path(path)
                 markdown_writer.write(result, output_path)
                 self.log_message.emit("INFO", f"Saved: {output_path}")
+                success_count += 1
             except Exception as e:
                 had_errors = True
+                failure_count += 1
                 self.log_message.emit("ERROR", f"Failed: {path} — {e}")
 
-        self.finished.emit(had_errors)
+        self.finished.emit(had_errors, success_count, failure_count)
