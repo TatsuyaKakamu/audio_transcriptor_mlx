@@ -1,8 +1,0 @@
-Metadata-Version: 2.4
-Name: mlx-audio-transcriptor
-Version: 0.1.0
-Requires-Python: >=3.11
-Requires-Dist: PySide6
-Requires-Dist: mlx-whisper
-Requires-Dist: silero-vad
-Requires-Dist: soundfile
