@@ -74,7 +74,9 @@ launchd WatchPaths=~/Downloads
     ↓
 app.cli scan
     ↓  fcntl.flock で重複起動を抑止
-_process_pending()  ─  拡張子・既処理判定（*.transcript.md 有無）・stability wait
+_process_pending()  ─  _scan_once() を「処理件数 0」になるまで再実行（処理中に追加されたファイルも拾う、最大 _RESCAN_MAX_PASSES 回）
+    ↓
+_scan_once()  ─  拡張子・既処理判定（*.transcript.md 有無）・stability wait
     ↓
 _transcribe_one()
     ├─ notifier.notify("文字起こし開始", …)

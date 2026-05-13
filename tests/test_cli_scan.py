@@ -184,6 +184,39 @@ def test_minutes_invoked_when_enabled(tmp_path: Path, patched, monkeypatch) -> N
     assert kwargs["notify"] is not None
 
 
+def test_rescans_watch_dir_after_processing(tmp_path: Path, monkeypatch) -> None:
+    trash_mock = MagicMock()
+    monkeypatch.setattr("app.cli.send2trash.send2trash", trash_mock)
+
+    later_audio = tmp_path / "later.wav"
+
+    def fake_transcribe(path: Path, model: str, language: str, **_kwargs) -> TranscriptionResult:
+        if path.name == "first.wav" and not later_audio.exists():
+            later_audio.write_bytes(b"fake")
+        return TranscriptionResult(
+            source_path=path,
+            language=language,
+            model=model,
+            segments=[],
+        )
+
+    transcribe_mock = MagicMock(side_effect=fake_transcribe)
+    monkeypatch.setattr("app.cli.transcriber.transcribe", transcribe_mock)
+
+    (tmp_path / "first.wav").write_bytes(b"fake")
+
+    rc = cli.cmd_scan(
+        cfg=_cfg(tmp_path, trash_source_after_success=False),
+        lock_path=tmp_path / "scan.lock",
+    )
+
+    assert rc == 0
+    transcribed = sorted(call.args[0].name for call in transcribe_mock.call_args_list)
+    assert transcribed == ["first.wav", "later.wav"]
+    assert (tmp_path / "first.transcript.md").exists()
+    assert (tmp_path / "later.transcript.md").exists()
+
+
 def test_minutes_none_return_does_not_block_trash(tmp_path: Path, patched, monkeypatch) -> None:
     _, trash_mock = patched
     monkeypatch.setattr("app.cli.minutes.run_for", MagicMock(return_value=None))

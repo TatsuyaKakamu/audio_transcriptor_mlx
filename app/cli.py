@@ -27,6 +27,7 @@ _LOG_DIR = Path.home() / "Library" / "Logs" / "mlx-audio-transcriptor"
 _CLI_LOG_PATH = _LOG_DIR / "cli.log"
 _STABILITY_TIMEOUT_SEC = 120.0
 _STABILITY_POLL_SEC = 1.0
+_RESCAN_MAX_PASSES = 100
 
 
 def _already_transcribed(source: Path) -> bool:
@@ -95,11 +96,7 @@ def _transcribe_one(path: Path, cfg: AppConfig) -> None:
             logger.warning("trash failed for %s: %s", path, e)
 
 
-def _process_pending(cfg: AppConfig) -> int:
-    if not cfg.watch_dir.is_dir():
-        logger.warning("watch_dir does not exist: %s", cfg.watch_dir)
-        return 0
-
+def _scan_once(cfg: AppConfig) -> tuple[int, int]:
     processed = 0
     errors = 0
     for path in sorted(cfg.watch_dir.iterdir()):
@@ -117,9 +114,33 @@ def _process_pending(cfg: AppConfig) -> int:
         except Exception as e:
             errors += 1
             logger.error("failed to transcribe %s: %s", path, e, exc_info=True)
+    return processed, errors
 
-    logger.info("scan done: processed=%d errors=%d", processed, errors)
-    return 1 if errors else 0
+
+def _process_pending(cfg: AppConfig) -> int:
+    if not cfg.watch_dir.is_dir():
+        logger.warning("watch_dir does not exist: %s", cfg.watch_dir)
+        return 0
+
+    total_processed = 0
+    total_errors = 0
+    for pass_index in range(1, _RESCAN_MAX_PASSES + 1):
+        processed, errors = _scan_once(cfg)
+        total_processed += processed
+        total_errors += errors
+        if processed == 0:
+            break
+        logger.info(
+            "rescan pass %d: processed=%d errors=%d; re-checking watch_dir for new files",
+            pass_index,
+            processed,
+            errors,
+        )
+    else:
+        logger.warning("rescan pass cap reached (%d); stopping", _RESCAN_MAX_PASSES)
+
+    logger.info("scan done: processed=%d errors=%d", total_processed, total_errors)
+    return 1 if total_errors else 0
 
 
 def cmd_scan(cfg: AppConfig | None = None, lock_path: Path | None = None) -> int:
