@@ -1,5 +1,7 @@
 # mlx-audio-transcriptor
 
+![mlx-audio-transcriptor](docs/images/hero.jpg)
+
 macOS Apple Silicon 上で動作する、ローカル音声文字起こし GUI アプリ。  
 `wav` / `mp3` ファイルをドラッグ&ドロップすると `mlx-whisper` で文字起こしし、同フォルダに Markdown ファイルを保存する。
 
