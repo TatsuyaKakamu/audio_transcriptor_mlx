@@ -11,6 +11,7 @@ import send2trash
 
 from app.config import AppConfig, load_config
 from app.services import (
+    auto_pr,
     file_naming,
     markdown_writer,
     minutes,
@@ -77,8 +78,9 @@ def _transcribe_one(path: Path, cfg: AppConfig) -> None:
     notifier.notify("文字起こし完了", f"{path.name} → {output_path.name}")
     logger.info("wrote markdown: %s", output_path)
 
+    minutes_result = None
     if cfg.minutes.enabled:
-        minutes.run_for(
+        minutes_result = minutes.run_for(
             transcript_path=output_path,
             audio_path=path,
             transcript_text=minutes_generator.transcript_plain_text(result),
@@ -88,7 +90,16 @@ def _transcribe_one(path: Path, cfg: AppConfig) -> None:
             notify=notifier.notify,
         )
 
-    if cfg.trash_source_after_success:
+    pr_ok = True
+    if cfg.auto_pr.enabled:
+        pr_ok = auto_pr.publish_pair(
+            transcript_path=output_path,
+            minutes_path=minutes_result.output_path if minutes_result else None,
+            audio_path=path,
+            cfg=cfg.auto_pr,
+        )
+
+    if cfg.trash_source_after_success and pr_ok:
         try:
             send2trash.send2trash(str(path))
             logger.info("moved to Trash: %s", path)

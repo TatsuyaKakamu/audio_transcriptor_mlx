@@ -75,7 +75,15 @@ _transcribe_one()
 
 ### 設定 (`~/.config/mlx-audio-transcriptor/config.toml`)
 
-`app/config.py` の `load_config()` が GUI / CLI 共通で TOML を読む。ファイルが無ければコード内デフォルトを使う。既知キー: `language`, `model`, `watch_dir`, `extensions`, `file_stability_seconds`, `trash_source_after_success`。GUI 起動時にこれを読んでコンボボックスの初期値を設定する。`install-watcher.sh` が未存在時に `config.toml.example` を自動コピーする。
+`app/config.py` の `load_config()` が GUI / CLI 共通で TOML を読む。ファイルが無ければコード内デフォルトを使う。既知キー: `language`, `model`, `watch_dir`, `extensions`, `file_stability_seconds`, `trash_source_after_success`、および `[minutes]` / `[auto_pr]` テーブル。GUI 起動時にこれを読んでコンボボックスの初期値を設定する。`install-watcher.sh` が未存在時に `config.toml.example` を自動コピーする。
+
+### 自動 PR (`[auto_pr]`、CLI 経路のみ)
+
+`services/auto_pr.publish_pair()` が CLI 経路 (`app/cli.py:_transcribe_one()`) の議事録ブロック直後で呼ばれる。`cfg.auto_pr.enabled=False` ならスキップ。
+
+フロー: dirty 検知 → `git fetch/checkout/reset` でクリーン状態 → 新ブランチ → md コピー → commit → push → `gh pr create`。失敗時は `False` を返して `notifier.notify` で通知、`trash_source_after_success` もスキップ（best-effort）。
+
+セキュリティ上の前提: mlx-audio-transcriptor は public リポジトリのため、コード・`config.toml.example` ・ドキュメントには個人の GitHub ID やリポジトリ名、絶対パスを書かない。push 先は private リポジトリに限定する旨を README に明記。
 
 ### 通知 (CLI のみ)
 

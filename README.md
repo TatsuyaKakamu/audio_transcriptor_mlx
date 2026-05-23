@@ -175,6 +175,47 @@ request_timeout_seconds = 600.0    # num_ctx >= 32768 なら 600 以上推奨
 Ollama 未起動・モデル未取得・タイムアウト等で失敗しても、トランスクリプト本体および `trash_source_after_success` による元ファイルのゴミ箱送りには影響しない（best-effort）。
 CLI では macOS 通知センターに「議事録生成失敗」が届き、GUI ではログペインに記録される。
 
+## 任意 Git リポジトリへの自動 PR (`[auto_pr]`)
+
+`[auto_pr].enabled = true` のとき、文字起こし（および議事録）書き出し直後に、指定したローカルクローンの Git リポジトリへ自動でブランチを作成 → コミット → push → `gh pr create` で PR を作成する。launchd watcher 経由の自動運用に組み込む想定。GUI 経路には組み込んでいない。
+
+### 動作
+
+1. `repo_path` のローカルクローンが clean state であることを確認（dirty なら abort してユーザー作業を保護）
+2. `origin/<default_branch>` を fetch & ローカルを reset
+3. `<branch_prefix><YYYY-MM-DD>-<6文字ランダム英数字>` のブランチを切る
+4. `transcript_subdir` / `minutes_subdir` にトランスクリプトと議事録をコピーしてコミット
+5. push して `gh pr create`
+6. 最後にローカルクローンを `<default_branch>` に戻す
+
+### 警告（公開リポジトリ運用上の注意）
+
+- この機能は **トランスクリプト全文を push 先リポジトリにコミットする**。録音内容に機微情報を含む可能性がある場合、push 先は **private リポジトリに限定** すること。
+- 認証は実行ユーザーの `gh` CLI 認証情報に依存する（`gh auth status` で確認）。共有マシンでの利用は避ける。
+- ローカルクローンを事前に `git clone` し、`gh` でも操作できる状態にしておくこと。
+
+### 設定（`config.toml` の `[auto_pr]` テーブル）
+
+詳細なコメント付き設定例は [`config.toml.example`](config.toml.example) の `[auto_pr]` セクションを参照。
+
+```toml
+[auto_pr]
+enabled = false                            # 既定 off
+repo_path = "~/path/to/your-repo"          # ローカルクローンパス
+transcript_subdir = ""                     # 配置先（空ならリポジトリルート直下）
+minutes_subdir = ""
+default_branch = "main"
+branch_prefix = "auto-transcript/"
+commit_message_template = "add transcript for {date}"
+pr_title_template       = "add transcript for {date}"
+pr_body_template = "..."                   # テンプレート変数: {date}, {transcript_name}, {minutes_name}, {topic}, {branch}
+gh_repo = ""                               # 空なら origin remote から自動推定
+```
+
+### 失敗時の挙動
+
+PR 作成中の任意のステップで失敗した場合、macOS 通知センターに「PR 作成失敗」が届く。トランスクリプト本体は保持されるが、`trash_source_after_success` による元音声のゴミ箱送りは **スキップ** される（後から手動 push できるよう元ファイルを残す）。
+
 ## 対応ファイル
 
 | 拡張子 | 備考 |
@@ -215,7 +256,8 @@ mlx-audio-transcriptor/
 │   │   ├── progress.py                # 25/50/75% マイルストーン通知コールバック
 │   │   ├── minutes.py                 # 議事録生成オーケストレーター（best-effort）
 │   │   ├── minutes_generator.py       # Ollama HTTP クライアント（urllib.request）
-│   │   └── minutes_writer.py          # <日付>_<議題>.md ファイル生成・採番
+│   │   ├── minutes_writer.py          # <日付>_<議題>.md ファイル生成・採番
+│   │   └── auto_pr.py                 # 任意 Git リポジトリへの自動 PR（best-effort）
 │   ├── workers/
 │   │   └── transcription_worker.py    # バックグラウンド処理（進捗通知）
 │   └── models/
@@ -238,7 +280,8 @@ mlx-audio-transcriptor/
     ├── test_progress.py
     ├── test_minutes_generator.py
     ├── test_minutes_orchestrator.py
-    └── test_minutes_writer.py
+    ├── test_minutes_writer.py
+    └── test_auto_pr.py
 ```
 
 ## テスト
