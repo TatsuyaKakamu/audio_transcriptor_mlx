@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app import cli
-from app.config import AppConfig, MinutesConfig
+from app.config import AppConfig, AutoPRConfig, MinutesConfig
 from app.models.types import TranscriptionResult
 
 
@@ -159,7 +159,8 @@ def test_minutes_skipped_when_disabled(tmp_path: Path, patched, monkeypatch) -> 
     monkeypatch.setattr("app.cli.minutes.run_for", minutes_mock)
     (tmp_path / "meeting.wav").write_bytes(b"fake")
 
-    cli.cmd_scan(cfg=_cfg(tmp_path), lock_path=tmp_path / "scan.lock")
+    cfg = _cfg(tmp_path, minutes=MinutesConfig(enabled=False))
+    cli.cmd_scan(cfg=cfg, lock_path=tmp_path / "scan.lock")
 
     minutes_mock.assert_not_called()
 
@@ -227,4 +228,98 @@ def test_minutes_none_return_does_not_block_trash(tmp_path: Path, patched, monke
     rc = cli.cmd_scan(cfg=cfg, lock_path=tmp_path / "scan.lock")
 
     assert rc == 0
+    trash_mock.assert_called_once_with(str(audio))
+
+
+def test_auto_pr_invoked_when_enabled(tmp_path: Path, patched, monkeypatch) -> None:
+    from app.services.minutes import MinutesRunResult
+
+    minutes_path = tmp_path / "2026-05-23_topic.md"
+    monkeypatch.setattr(
+        "app.cli.minutes.run_for",
+        MagicMock(
+            return_value=MinutesRunResult(
+                output_path=minutes_path, topic_sanitized="topic"
+            )
+        ),
+    )
+    auto_pr_mock = MagicMock(return_value=True)
+    monkeypatch.setattr("app.cli.auto_pr.publish_pair", auto_pr_mock)
+
+    audio = tmp_path / "meeting.wav"
+    audio.write_bytes(b"fake")
+
+    cfg = _cfg(
+        tmp_path,
+        minutes=MinutesConfig(enabled=True),
+        auto_pr=AutoPRConfig(enabled=True, repo_path=tmp_path / "repo"),
+    )
+    cli.cmd_scan(cfg=cfg, lock_path=tmp_path / "scan.lock")
+
+    auto_pr_mock.assert_called_once()
+    kwargs = auto_pr_mock.call_args.kwargs
+    assert kwargs["transcript_path"] == tmp_path / "meeting.transcript.md"
+    assert kwargs["minutes_path"] == minutes_path
+    assert kwargs["audio_path"] == audio
+    assert kwargs["cfg"].enabled is True
+
+
+def test_auto_pr_not_invoked_when_disabled(tmp_path: Path, patched, monkeypatch) -> None:
+    auto_pr_mock = MagicMock()
+    monkeypatch.setattr("app.cli.auto_pr.publish_pair", auto_pr_mock)
+
+    audio = tmp_path / "meeting.wav"
+    audio.write_bytes(b"fake")
+
+    cli.cmd_scan(cfg=_cfg(tmp_path), lock_path=tmp_path / "scan.lock")
+
+    auto_pr_mock.assert_not_called()
+
+
+def test_auto_pr_failure_skips_trash(tmp_path: Path, patched, monkeypatch) -> None:
+    _, trash_mock = patched
+    monkeypatch.setattr("app.cli.minutes.run_for", MagicMock(return_value=None))
+    monkeypatch.setattr("app.cli.auto_pr.publish_pair", MagicMock(return_value=False))
+
+    audio = tmp_path / "meeting.wav"
+    audio.write_bytes(b"fake")
+
+    cfg = _cfg(
+        tmp_path,
+        auto_pr=AutoPRConfig(enabled=True, repo_path=tmp_path / "repo"),
+    )
+    rc = cli.cmd_scan(cfg=cfg, lock_path=tmp_path / "scan.lock")
+
+    assert rc == 0
+    trash_mock.assert_not_called()
+    assert audio.exists()
+
+
+def test_auto_pr_success_allows_trash(tmp_path: Path, patched, monkeypatch) -> None:
+    _, trash_mock = patched
+    monkeypatch.setattr("app.cli.minutes.run_for", MagicMock(return_value=None))
+    monkeypatch.setattr("app.cli.auto_pr.publish_pair", MagicMock(return_value=True))
+
+    audio = tmp_path / "meeting.wav"
+    audio.write_bytes(b"fake")
+
+    cfg = _cfg(
+        tmp_path,
+        auto_pr=AutoPRConfig(enabled=True, repo_path=tmp_path / "repo"),
+    )
+    cli.cmd_scan(cfg=cfg, lock_path=tmp_path / "scan.lock")
+
+    trash_mock.assert_called_once_with(str(audio))
+
+
+def test_auto_pr_disabled_with_minutes_none_keeps_trash(tmp_path: Path, patched, monkeypatch) -> None:
+    """Regression: trash_ok must default to True when auto_pr is disabled."""
+    _, trash_mock = patched
+    monkeypatch.setattr("app.cli.minutes.run_for", MagicMock(return_value=None))
+    audio = tmp_path / "meeting.wav"
+    audio.write_bytes(b"fake")
+
+    cfg = _cfg(tmp_path, minutes=MinutesConfig(enabled=True))
+    cli.cmd_scan(cfg=cfg, lock_path=tmp_path / "scan.lock")
+
     trash_mock.assert_called_once_with(str(audio))

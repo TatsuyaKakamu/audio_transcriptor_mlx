@@ -94,7 +94,7 @@ _transcribe_one()
 
 ### 設定 (`~/.config/mlx-audio-transcriptor/config.toml`)
 
-`app/config.py` の `load_config()` が GUI / CLI 共通で TOML を読む。ファイルが無ければコード内デフォルトを使う。既知キー: `language`, `model`, `watch_dir`, `extensions`, `file_stability_seconds`, `trash_source_after_success`、および `[minutes]` テーブル（`enabled`, `ollama_host`, `model`, `prompt_language`, `num_ctx`, `max_input_chars`, `request_timeout_seconds`）。GUI 起動時にこれを読んでコンボボックスの初期値を設定する。`install-watcher.sh` が未存在時に `config.toml.example` を自動コピーする。
+`app/config.py` の `load_config()` が GUI / CLI 共通で TOML を読む。ファイルが無ければコード内デフォルトを使う。既知キー: `language`, `model`, `watch_dir`, `extensions`, `file_stability_seconds`, `trash_source_after_success`、および `[minutes]` テーブル（`enabled`, `ollama_host`, `model`, `prompt_language`, `num_ctx`, `max_input_chars`, `request_timeout_seconds`）、`[auto_pr]` テーブル（`enabled`, `repo_path`, `transcript_subdir`, `minutes_subdir`, `default_branch`, `branch_prefix`, `commit_message_template`, `pr_title_template`, `pr_body_template`, `gh_repo`）。GUI 起動時にこれを読んでコンボボックスの初期値を設定する。`install-watcher.sh` が未存在時に `config.toml.example` を自動コピーする。
 
 ### 通知
 
@@ -120,6 +120,41 @@ _transcribe_one()
 - `services/minutes_writer.py` が `sanitize_topic`（パス区切り文字・制御文字除去、空白→`_`）→ `derive_minutes_filename`（音声ファイル mtime 基準の日付を使用）→ 衝突時 `.N.md` 採番でファイルを書く
 - 入力テキストは `minutes_generator.transcript_plain_text()` がセグメントテキストを改行連結して生成（タイムスタンプは除外）
 - GUI は `on_log` 経由でログペインへ、CLI は `notifier.notify` 経由で macOS 通知センターへ「議事録生成中…」「議事録生成完了」「議事録生成失敗」を送る
+
+### 自動 PR (`[auto_pr]`)
+
+CLI 経路 (`app/cli.py:_transcribe_one()`) の議事録ブロック直後で `services/auto_pr.publish_pair()` を呼ぶ。`cfg.auto_pr.enabled=False` ならスキップ。GUI 経路（`TranscriptionWorker`）には組み込んでいない（必要なら同じ関数を再利用）。
+
+`publish_pair()` のフロー:
+
+1. preflight: `repo_path` の存在 / `.git` ディレクトリ / `git` & `gh` バイナリ / 入力ファイル / `git status --porcelain` が空（dirty 検知でユーザー作業を保護）
+2. `git fetch origin <default_branch>` → `git checkout <default_branch>` → `git reset --hard origin/<default_branch>` でクリーン状態にする
+3. `git checkout -b <branch_prefix><YYYY-MM-DD>-<6文字英数字>` で新ブランチ作成
+4. `transcript_subdir` と `minutes_subdir` に `shutil.copy2` でコピー → `git add -- <相対パス>` → `git commit -m <commit_message_template>`
+5. `git push -u origin <branch>` → `gh pr create --head <branch> --base <default_branch> --title ... --body ...`（`gh_repo` 指定時は `-R` 追加）
+6. 成否に関わらず最後に `git checkout <default_branch>` で main に戻す（best-effort）
+
+通知（議事録生成と同じく 3 段階）:
+- preflight 通過後（ブランチ作成前）に `notifier.notify("PR 作成中…", repo名)` を出す
+- 成功時: `notifier.notify("PR 作成完了", PR URL)`
+- 失敗時: `notifier.notify("PR 作成失敗", 短い理由)`
+- preflight 段階の失敗（repo_path 不在・dirty 検知など）は開始通知を出さず、失敗通知のみ
+
+失敗時の挙動（best-effort）:
+- 全ての例外を握り潰して `False` を返す
+- `_transcribe_one()` 側は `publish_pair()` が `False` を返したら `trash_source_after_success` をスキップする（後から手動 push できるよう元音声を残す）
+
+ブランチ名・コミットメッセージ・PR タイトル/本文のテンプレート変数: `{date}`, `{transcript_name}`, `{minutes_name}`, `{topic}`, `{branch}`。未定義変数は空文字に置換（`defaultdict(str) + format_map`）。テンプレート構文エラー時は生のテンプレート文字列を使う。
+
+日付の決定: 議事録ファイル名先頭 `YYYY-MM-DD` を優先、なければ音声ファイル `mtime`。
+
+セキュリティ上の前提:
+- mlx-audio-transcriptor リポジトリは public なので、`config.toml.example` には**プレースホルダのみ**書く。実在パス・GitHub ID・運用固有のタイトル文言は書かない
+- `~/.config/mlx-audio-transcriptor/config.toml` 本体は git ignore 対象、ユーザー個人運用に閉じる
+- トランスクリプト全文が push 先リポジトリにコミットされるため、push 先は **private リポジトリに限定**する旨を README に明記
+- 認証は実行ユーザーの `gh` CLI 認証情報に依存（`gh auth status` で確認）
+
+`transcript_subdir` / `minutes_subdir` がリポジトリ外を指す場合（`../escape` など）は `relative_to()` 検査で abort する。
 
 ### モデル解決
 
@@ -168,7 +203,7 @@ topic: 予算会議
 
 ロジック層（`services/`）は GUI なしで単体テスト可能。`tests/conftest.py` が `mlx_whisper` / `tqdm` のスタブを差し込むため、macOS 以外の CI 環境でもロジック層テストが動く。
 
-テストファイル: `test_file_naming.py`, `test_markdown_writer.py`, `test_segment_merger.py`, `test_config.py`, `test_cli_scan.py`, `test_notifier.py`, `test_progress.py`, `test_minutes_generator.py`, `test_minutes_orchestrator.py`, `test_minutes_writer.py`。`transcriber.py` と `vad.py` は `mlx-whisper` / `silero_vad` への依存があるためテスト外。`minutes_generator.py` は autouse fixture `_block_real_http` が実 HTTP を遮断するためロジック単体でテスト可能。
+テストファイル: `test_file_naming.py`, `test_markdown_writer.py`, `test_segment_merger.py`, `test_config.py`, `test_cli_scan.py`, `test_notifier.py`, `test_progress.py`, `test_minutes_generator.py`, `test_minutes_orchestrator.py`, `test_minutes_writer.py`, `test_auto_pr.py`。`transcriber.py` と `vad.py` は `mlx-whisper` / `silero_vad` への依存があるためテスト外。`minutes_generator.py` は autouse fixture `_block_real_http` が実 HTTP を遮断するためロジック単体でテスト可能。`auto_pr.py` は `subprocess.run` を `monkeypatch.setattr` で差し替えて git/gh コマンド呼び出しを検証する。
 
 ## 現時点の制限
 

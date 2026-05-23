@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.config import AppConfig, MinutesConfig, load_config
+from app.config import AppConfig, AutoPRConfig, MinutesConfig, load_config
 
 
 def test_missing_file_returns_defaults(tmp_path: Path) -> None:
@@ -103,3 +103,58 @@ def test_minutes_full_override(tmp_path: Path) -> None:
         request_timeout_seconds=30.5,
         num_ctx=16384,
     )
+
+
+def test_auto_pr_defaults_when_missing(tmp_path: Path) -> None:
+    cfg = load_config(tmp_path / "missing.toml")
+    assert cfg.auto_pr == AutoPRConfig()
+    assert cfg.auto_pr.enabled is False
+    assert cfg.auto_pr.default_branch == "main"
+    assert cfg.auto_pr.branch_prefix == "auto-transcript/"
+    assert cfg.auto_pr.gh_repo == ""
+
+
+def test_auto_pr_partial_override(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[auto_pr]\nenabled = true\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(path)
+    assert cfg.auto_pr.enabled is True
+    assert cfg.auto_pr.branch_prefix == AutoPRConfig().branch_prefix
+    assert cfg.auto_pr.default_branch == AutoPRConfig().default_branch
+
+
+def test_auto_pr_full_override(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "\n".join(
+            [
+                "[auto_pr]",
+                "enabled = true",
+                'repo_path = "~/some-repo"',
+                'transcript_subdir = "transcript"',
+                'minutes_subdir = "transcript/summary"',
+                'default_branch = "trunk"',
+                'branch_prefix = "claude/transcript-"',
+                'commit_message_template = "add for {date}"',
+                'pr_title_template = "PR for {date}"',
+                'pr_body_template = "body"',
+                'gh_repo = "owner/repo"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_config(path)
+    assert cfg.auto_pr.enabled is True
+    assert cfg.auto_pr.repo_path == Path.home() / "some-repo"
+    assert cfg.auto_pr.transcript_subdir == "transcript"
+    assert cfg.auto_pr.minutes_subdir == "transcript/summary"
+    assert cfg.auto_pr.default_branch == "trunk"
+    assert cfg.auto_pr.branch_prefix == "claude/transcript-"
+    assert cfg.auto_pr.commit_message_template == "add for {date}"
+    assert cfg.auto_pr.pr_title_template == "PR for {date}"
+    assert cfg.auto_pr.pr_body_template == "body"
+    assert cfg.auto_pr.gh_repo == "owner/repo"
