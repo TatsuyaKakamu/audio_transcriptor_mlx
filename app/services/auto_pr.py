@@ -49,6 +49,9 @@ def publish_pair(
         notifier.notify("PR 作成失敗", str(e)[:200])
         return False
 
+    notifier.notify("PR 作成中…", f"→ {repo_path.name}")
+    logger.info("auto_pr starting (repo=%s)", repo_path)
+
     branch: str | None = None
     try:
         date_str = _resolve_date(minutes_path, audio_path)

@@ -125,7 +125,8 @@ def test_happy_path_creates_branch_and_pr(tmp_path: Path, monkeypatch) -> None:
     ]
     run, calls = _fake_runner(scripted)
     monkeypatch.setattr(subprocess, "run", run)
-    monkeypatch.setattr(auto_pr.notifier, "notify", MagicMock())
+    notify_mock = MagicMock()
+    monkeypatch.setattr(auto_pr.notifier, "notify", notify_mock)
     monkeypatch.setattr(auto_pr.shutil, "which", lambda name: "/usr/bin/" + name)
 
     ok = auto_pr.publish_pair(
@@ -136,6 +137,10 @@ def test_happy_path_creates_branch_and_pr(tmp_path: Path, monkeypatch) -> None:
     )
 
     assert ok is True
+
+    notify_titles = [c.args[0] for c in notify_mock.call_args_list]
+    assert notify_titles == ["PR 作成中…", "PR 作成完了"]
+    assert "github.com/example/repo/pull/42" in notify_mock.call_args_list[1].args[1]
 
     command_strings = [" ".join(c) for c in calls]
     assert any(c == "git status --porcelain" for c in command_strings)
@@ -219,8 +224,8 @@ def test_push_failure_returns_false_and_restores_base(tmp_path: Path, monkeypatc
     )
 
     assert ok is False
-    notify_mock.assert_called_once()
-    assert notify_mock.call_args.args[0] == "PR 作成失敗"
+    notify_titles = [c.args[0] for c in notify_mock.call_args_list]
+    assert notify_titles == ["PR 作成中…", "PR 作成失敗"]
     # cleanup: a git checkout main was attempted
     restore_attempts = [
         args for args in calls if args[:3] == ["git", "checkout", "main"]
@@ -251,7 +256,8 @@ def test_gh_failure_returns_false(tmp_path: Path, monkeypatch) -> None:
     )
 
     assert ok is False
-    notify_mock.assert_called_once()
+    notify_titles = [c.args[0] for c in notify_mock.call_args_list]
+    assert notify_titles == ["PR 作成中…", "PR 作成失敗"]
 
 
 def test_missing_repo_path_aborts(tmp_path: Path, monkeypatch) -> None:
@@ -386,7 +392,8 @@ def test_subdir_escape_attempt_aborts(tmp_path: Path, monkeypatch) -> None:
     )
 
     assert ok is False
-    notify_mock.assert_called_once()
+    notify_titles = [c.args[0] for c in notify_mock.call_args_list]
+    assert notify_titles == ["PR 作成中…", "PR 作成失敗"]
 
 
 def test_format_template_unknown_var_blank() -> None:

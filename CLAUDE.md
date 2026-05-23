@@ -134,9 +134,14 @@ CLI 経路 (`app/cli.py:_transcribe_one()`) の議事録ブロック直後で `s
 5. `git push -u origin <branch>` → `gh pr create --head <branch> --base <default_branch> --title ... --body ...`（`gh_repo` 指定時は `-R` 追加）
 6. 成否に関わらず最後に `git checkout <default_branch>` で main に戻す（best-effort）
 
+通知（議事録生成と同じく 3 段階）:
+- preflight 通過後（ブランチ作成前）に `notifier.notify("PR 作成中…", repo名)` を出す
+- 成功時: `notifier.notify("PR 作成完了", PR URL)`
+- 失敗時: `notifier.notify("PR 作成失敗", 短い理由)`
+- preflight 段階の失敗（repo_path 不在・dirty 検知など）は開始通知を出さず、失敗通知のみ
+
 失敗時の挙動（best-effort）:
 - 全ての例外を握り潰して `False` を返す
-- `notifier.notify("PR 作成失敗", 短い理由)` で macOS 通知
 - `_transcribe_one()` 側は `publish_pair()` が `False` を返したら `trash_source_after_success` をスキップする（後から手動 push できるよう元音声を残す）
 
 ブランチ名・コミットメッセージ・PR タイトル/本文のテンプレート変数: `{date}`, `{transcript_name}`, `{minutes_name}`, `{topic}`, `{branch}`。未定義変数は空文字に置換（`defaultdict(str) + format_map`）。テンプレート構文エラー時は生のテンプレート文字列を使う。

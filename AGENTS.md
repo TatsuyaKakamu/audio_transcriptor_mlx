@@ -81,7 +81,7 @@ _transcribe_one()
 
 `services/auto_pr.publish_pair()` が CLI 経路 (`app/cli.py:_transcribe_one()`) の議事録ブロック直後で呼ばれる。`cfg.auto_pr.enabled=False` ならスキップ。
 
-フロー: dirty 検知 → `git fetch/checkout/reset` でクリーン状態 → 新ブランチ → md コピー → commit → push → `gh pr create`。失敗時は `False` を返して `notifier.notify` で通知、`trash_source_after_success` もスキップ（best-effort）。
+フロー: dirty 検知 → `git fetch/checkout/reset` でクリーン状態 → 新ブランチ → md コピー → commit → push → `gh pr create`。通知は議事録生成と揃えて 3 段階（`"PR 作成中…"` / `"PR 作成完了"` / `"PR 作成失敗"`）。失敗時は `False` を返し、`trash_source_after_success` もスキップ（best-effort）。
 
 セキュリティ上の前提: mlx-audio-transcriptor は public リポジトリのため、コード・`config.toml.example` ・ドキュメントには個人の GitHub ID やリポジトリ名、絶対パスを書かない。push 先は private リポジトリに限定する旨を README に明記。
 
