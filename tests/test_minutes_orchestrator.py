@@ -50,7 +50,13 @@ def test_run_for_writes_file_on_success(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         minutes.minutes_generator,
         "generate_minutes",
-        MagicMock(return_value=GeneratedMinutes(topic="予算会議", body_markdown="# 予算会議\n## 概要\n要約")),
+        MagicMock(
+            return_value=GeneratedMinutes(
+                topic="予算会議",
+                body_markdown="# 予算会議\n## 概要\n要約",
+                filename_slug="budget_meeting",
+            )
+        ),
     )
 
     out = minutes.run_for(
@@ -62,7 +68,7 @@ def test_run_for_writes_file_on_success(tmp_path, monkeypatch) -> None:
         cfg=_enabled_cfg(),
     )
     assert out is not None
-    assert out.output_path == tmp_path / "2026-05-08_予算会議.md"
+    assert out.output_path == tmp_path / "2026-05-08_budget_meeting.md"
     assert out.topic_sanitized == "予算会議"
     content = out.output_path.read_text(encoding="utf-8")
     assert "topic: 予算会議" in content
@@ -75,7 +81,9 @@ def test_run_for_logs_and_notifies_on_success(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         minutes.minutes_generator,
         "generate_minutes",
-        MagicMock(return_value=GeneratedMinutes(topic="t", body_markdown="# t")),
+        MagicMock(
+            return_value=GeneratedMinutes(topic="t", body_markdown="# t", filename_slug="t")
+        ),
     )
     log_mock = MagicMock()
     notify_mock = MagicMock()
@@ -145,11 +153,15 @@ def test_run_for_swallows_unexpected_exception(tmp_path, monkeypatch) -> None:
 
 def test_run_for_collision_appends_suffix(tmp_path, monkeypatch) -> None:
     audio, transcript = _setup_paths(tmp_path)
-    (tmp_path / "2026-05-08_予算会議.md").write_text("既存", encoding="utf-8")
+    (tmp_path / "2026-05-08_budget_meeting.md").write_text("既存", encoding="utf-8")
     monkeypatch.setattr(
         minutes.minutes_generator,
         "generate_minutes",
-        MagicMock(return_value=GeneratedMinutes(topic="予算会議", body_markdown="# 予算会議")),
+        MagicMock(
+            return_value=GeneratedMinutes(
+                topic="予算会議", body_markdown="# 予算会議", filename_slug="budget_meeting"
+            )
+        ),
     )
     out = minutes.run_for(
         transcript_path=transcript,
@@ -160,9 +172,9 @@ def test_run_for_collision_appends_suffix(tmp_path, monkeypatch) -> None:
         cfg=_enabled_cfg(),
     )
     assert out is not None
-    assert out.output_path == tmp_path / "2026-05-08_予算会議.1.md"
+    assert out.output_path == tmp_path / "2026-05-08_budget_meeting.1.md"
     # 既存ファイルは触らない
-    assert (tmp_path / "2026-05-08_予算会議.md").read_text(encoding="utf-8") == "既存"
+    assert (tmp_path / "2026-05-08_budget_meeting.md").read_text(encoding="utf-8") == "既存"
 
 
 def test_run_for_callback_exceptions_are_swallowed(tmp_path, monkeypatch) -> None:
@@ -170,7 +182,9 @@ def test_run_for_callback_exceptions_are_swallowed(tmp_path, monkeypatch) -> Non
     monkeypatch.setattr(
         minutes.minutes_generator,
         "generate_minutes",
-        MagicMock(return_value=GeneratedMinutes(topic="x", body_markdown="# x")),
+        MagicMock(
+            return_value=GeneratedMinutes(topic="x", body_markdown="# x", filename_slug="x")
+        ),
     )
 
     def angry_log(level, msg):

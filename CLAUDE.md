@@ -64,7 +64,7 @@ DropArea (DnD) → MainWindow → TranscriptionWorker (QThread)
                               ↓
                           minutes_writer.build_minutes_markdown()
                               ↓
-                          <YYYY-MM-DD>_<topic>.md （on_log でログペインへ通知）
+                          <YYYY-MM-DD>_<filename_slug>.md （on_log でログペインへ通知）
 ```
 
 ### データフロー（CLI / launchd）
@@ -88,7 +88,7 @@ _transcribe_one()
     ├─ [minutes].enabled なら
     │     minutes.run_for()  →  minutes_generator → Ollama → minutes_writer
     │       ├─ notifier.notify("議事録生成中…") / notifier.notify("議事録生成完了") / notifier.notify("議事録生成失敗")
-    │       └─ <YYYY-MM-DD>_<topic>.md を書き出す（失敗しても以降の処理に影響しない）
+    │       └─ <YYYY-MM-DD>_<filename_slug>.md を書き出す（失敗しても以降の処理に影響しない）
     └─ trash_source_after_success が真なら send2trash
 ```
 
@@ -116,8 +116,8 @@ _transcribe_one()
 ### 議事録生成（Ollama）
 
 - `services/minutes.py` がオーケストレーター。`run_for()` は `MinutesGenerationError` も予期せぬ例外も握り潰して `None` を返す（best-effort）。`cfg.enabled=False` なら即 `None` を返してスキップ
-- `services/minutes_generator.py` が Ollama に `POST /api/generate` を発行（`format=json`、`stream=False`、`options.num_ctx`）。レスポンスの ` ```json ... ``` ` フェンスを許容し `{"topic", "minutes_markdown"}` を取り出す。`max_input_chars` 超過は先頭から切り詰めて WARN ログを出す。Python 依存は stdlib `urllib.request` のみ
-- `services/minutes_writer.py` が `sanitize_topic`（パス区切り文字・制御文字除去、空白→`_`）→ `derive_minutes_filename`（音声ファイル mtime 基準の日付を使用）→ 衝突時 `.N.md` 採番でファイルを書く
+- `services/minutes_generator.py` が Ollama に `POST /api/generate` を発行（`format=json`、`stream=False`、`options.num_ctx`）。レスポンスの ` ```json ... ``` ` フェンスを許容し `{"topic", "filename_slug", "minutes_markdown"}` を取り出す。`topic`（日本語、フロントマター用）と `filename_slug`（英語、ファイル名用）は別フィールド。`filename_slug` 欠落時は空文字にフォールバック（writer 側で `minutes` に補完）。`max_input_chars` 超過は先頭から切り詰めて WARN ログを出す。Python 依存は stdlib `urllib.request` のみ
+- `services/minutes_writer.py`: フロントマターの `topic` は `sanitize_topic`（パス区切り文字・制御文字除去、空白→`_`）で日本語のまま整形。ファイル名は `sanitize_slug`（ASCII 以外を除去して必ず英語化、空なら `minutes`）→ `derive_minutes_filename`（音声ファイル mtime 基準の日付を使用）→ 衝突時 `.N.md` 採番でファイルを書く。**本文は日本語、ファイル名は必ず英語**
 - 入力テキストは `minutes_generator.transcript_plain_text()` がセグメントテキストを改行連結して生成（タイムスタンプは除外）
 - GUI は `on_log` 経由でログペインへ、CLI は `notifier.notify` 経由で macOS 通知センターへ「議事録生成中…」「議事録生成完了」「議事録生成失敗」を送る
 
@@ -180,7 +180,7 @@ model: medium
 - [01:02:03.456 - 01:02:08.000] 1時間超えは HH:MM:SS.mmm 形式
 ```
 
-### 議事録（`<YYYY-MM-DD>_<topic>.md`）
+### 議事録（`<YYYY-MM-DD>_<filename_slug>.md`、ファイル名は必ず英語）
 
 ```markdown
 ---

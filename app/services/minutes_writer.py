@@ -6,7 +6,9 @@ from pathlib import Path
 
 _FORBIDDEN_CHARS = re.compile(r"[\x00-\x1f\x7f/\\:*?\"<>|]")
 _WHITESPACE_RUN = re.compile(r"\s+")
+_SLUG_DISALLOWED = re.compile(r"[^A-Za-z0-9._-]")
 _FALLBACK_TOPIC = "議題未取得"
+_FALLBACK_SLUG = "minutes"
 
 
 def sanitize_topic(topic: str, *, max_len: int = 60) -> str:
@@ -20,10 +22,22 @@ def sanitize_topic(topic: str, *, max_len: int = 60) -> str:
     return cleaned or _FALLBACK_TOPIC
 
 
-def derive_minutes_filename(audio_path: Path, topic: str) -> str:
+def sanitize_slug(slug: str, *, max_len: int = 60) -> str:
+    """Force an ASCII-only filename slug; non-English characters are dropped."""
+    if not isinstance(slug, str):
+        return _FALLBACK_SLUG
+    cleaned = _WHITESPACE_RUN.sub("_", slug.strip())
+    cleaned = _SLUG_DISALLOWED.sub("", cleaned)
+    cleaned = cleaned.strip("._-")
+    if len(cleaned) > max_len:
+        cleaned = cleaned[:max_len].strip("._-")
+    return cleaned or _FALLBACK_SLUG
+
+
+def derive_minutes_filename(audio_path: Path, slug: str) -> str:
     mtime = audio_path.stat().st_mtime
     date_str = _dt.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
-    return f"{date_str}_{sanitize_topic(topic)}.md"
+    return f"{date_str}_{sanitize_slug(slug)}.md"
 
 
 def resolve_minutes_output_path(directory: Path, base_name: str) -> Path:

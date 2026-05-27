@@ -65,7 +65,11 @@ def test_generate_minutes_calls_ollama_with_correct_payload(monkeypatch) -> None
         captured["url"] = url
         captured["payload"] = payload
         captured["timeout"] = timeout
-        return {"response": json.dumps({"topic": "予算", "minutes_markdown": "# 予算\n本文"})}
+        return {
+            "response": json.dumps(
+                {"topic": "予算", "filename_slug": "budget", "minutes_markdown": "# 予算\n本文"}
+            )
+        }
 
     monkeypatch.setattr(minutes_generator, "_http_post_json", fake_post)
 
@@ -79,7 +83,9 @@ def test_generate_minutes_calls_ollama_with_correct_payload(monkeypatch) -> None
     assert "transcript-text" in captured["payload"]["prompt"]
     assert captured["payload"]["options"]["num_ctx"] == 32768
     assert captured["timeout"] == 10.0
-    assert out == GeneratedMinutes(topic="予算", body_markdown="# 予算\n本文")
+    assert out == GeneratedMinutes(
+        topic="予算", body_markdown="# 予算\n本文", filename_slug="budget"
+    )
 
 
 def test_generate_minutes_truncates_long_transcript(monkeypatch, caplog) -> None:
@@ -128,6 +134,30 @@ def test_generate_minutes_missing_body_raises(monkeypatch) -> None:
     )
     with pytest.raises(MinutesGenerationError):
         generate_minutes("x", language="ja", cfg=_cfg())
+
+
+def test_generate_minutes_parses_filename_slug(monkeypatch) -> None:
+    monkeypatch.setattr(
+        minutes_generator,
+        "_http_post_json",
+        lambda *a, **k: {
+            "response": json.dumps(
+                {"topic": "予算", "filename_slug": "budget_meeting", "minutes_markdown": "# 予算"}
+            )
+        },
+    )
+    out = generate_minutes("x", language="ja", cfg=_cfg())
+    assert out.filename_slug == "budget_meeting"
+
+
+def test_generate_minutes_missing_filename_slug_defaults_empty(monkeypatch) -> None:
+    monkeypatch.setattr(
+        minutes_generator,
+        "_http_post_json",
+        lambda *a, **k: {"response": json.dumps({"topic": "予算", "minutes_markdown": "# 予算"})},
+    )
+    out = generate_minutes("x", language="ja", cfg=_cfg())
+    assert out.filename_slug == ""
 
 
 def test_generate_minutes_empty_response_raises(monkeypatch) -> None:

@@ -71,7 +71,7 @@ def run_for(
 
     try:
         topic_sanitized = minutes_writer.sanitize_topic(generated.topic)
-        filename = minutes_writer.derive_minutes_filename(audio_path, generated.topic)
+        filename = minutes_writer.derive_minutes_filename(audio_path, generated.filename_slug)
         output_path = minutes_writer.resolve_minutes_output_path(
             transcript_path.parent, filename
         )
