@@ -8,6 +8,7 @@ from app.services.minutes_writer import (
     build_minutes_markdown,
     derive_minutes_filename,
     resolve_minutes_output_path,
+    sanitize_slug,
     sanitize_topic,
     write_minutes,
 )
@@ -42,12 +43,47 @@ def test_sanitize_topic_non_string_falls_back() -> None:
     assert sanitize_topic(None) == "議題未取得"  # type: ignore[arg-type]
 
 
+def test_sanitize_slug_keeps_ascii_and_underscores() -> None:
+    assert sanitize_slug("budget review meeting") == "budget_review_meeting"
+
+
+def test_sanitize_slug_strips_non_ascii() -> None:
+    assert sanitize_slug("予算 review") == "review"
+
+
+def test_sanitize_slug_removes_path_separators_and_specials() -> None:
+    assert sanitize_slug("a/b:c*d") == "abcd"
+
+
+def test_sanitize_slug_empty_or_all_non_ascii_falls_back() -> None:
+    assert sanitize_slug("") == "minutes"
+    assert sanitize_slug("   ") == "minutes"
+    assert sanitize_slug("予算会議") == "minutes"
+
+
+def test_sanitize_slug_non_string_falls_back() -> None:
+    assert sanitize_slug(None) == "minutes"  # type: ignore[arg-type]
+
+
+def test_sanitize_slug_truncates() -> None:
+    out = sanitize_slug("a" * 200, max_len=60)
+    assert len(out) == 60
+
+
 def test_derive_filename_uses_audio_mtime(tmp_path: Path) -> None:
     audio = tmp_path / "meeting.wav"
     audio.write_bytes(b"x")
     target = _dt.datetime(2025, 7, 4, 12, 0, 0).timestamp()
     os.utime(audio, (target, target))
-    assert derive_minutes_filename(audio, "予算会議") == "2025-07-04_予算会議.md"
+    assert derive_minutes_filename(audio, "budget_meeting") == "2025-07-04_budget_meeting.md"
+
+
+def test_derive_filename_forces_english_slug(tmp_path: Path) -> None:
+    audio = tmp_path / "meeting.wav"
+    audio.write_bytes(b"x")
+    target = _dt.datetime(2025, 7, 4, 12, 0, 0).timestamp()
+    os.utime(audio, (target, target))
+    assert derive_minutes_filename(audio, "予算会議") == "2025-07-04_minutes.md"
 
 
 def test_resolve_minutes_collision_appends_suffix(tmp_path: Path) -> None:
