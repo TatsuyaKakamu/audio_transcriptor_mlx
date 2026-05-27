@@ -12,6 +12,7 @@ dependencies = [
     "silero-vad",
     "soundfile",
     "send2trash",
+    "tqdm",
 ]
 
 [tool.setuptools.packages.find]
