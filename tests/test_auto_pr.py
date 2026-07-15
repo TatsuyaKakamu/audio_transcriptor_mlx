@@ -143,10 +143,8 @@ def test_happy_path_creates_branch_and_pr(tmp_path: Path, monkeypatch) -> None:
     assert "github.com/example/repo/pull/42" in notify_mock.call_args_list[1].args[1]
 
     command_strings = [" ".join(c) for c in calls]
-    assert any(c == "git status --porcelain" for c in command_strings)
     assert any(c == "git fetch origin main" for c in command_strings)
-    assert any(c == "git checkout main" for c in command_strings)
-    assert any(c == "git reset --hard origin/main" for c in command_strings)
+    assert any(c.startswith("git worktree add --detach ") and c.endswith(" origin/main") for c in command_strings)
     assert any(c.startswith("git checkout -b auto-test/2026-05-23-") for c in command_strings)
     assert any(c.startswith("git add -- ") for c in command_strings)
     assert any(
@@ -155,12 +153,12 @@ def test_happy_path_creates_branch_and_pr(tmp_path: Path, monkeypatch) -> None:
         for c in command_strings
     )
     assert any(c.startswith("git push -u origin auto-test/2026-05-23-") for c in command_strings)
+    assert any(c.startswith("git worktree remove --force ") for c in command_strings)
     assert any(args[:3] == ["gh", "pr", "create"] for args in calls)
 
-    transcript_dest = repo / "transcript" / "meeting.transcript.md"
-    minutes_dest = repo / "transcript" / "summary" / "2026-05-23_予算会議.md"
-    assert transcript_dest.exists()
-    assert minutes_dest.exists()
+    add_call = next(args for args in calls if args[:2] == ["git", "add"])
+    assert "transcript/meeting.transcript.md" in add_call
+    assert "transcript/summary/2026-05-23_予算会議.md" in add_call
 
     pr_call = next(args for args in calls if args[:3] == ["gh", "pr", "create"])
     title = pr_call[pr_call.index("--title") + 1]
@@ -174,12 +172,12 @@ def test_happy_path_creates_branch_and_pr(tmp_path: Path, monkeypatch) -> None:
     assert head.startswith("auto-test/2026-05-23-")
 
 
-def test_dirty_repo_aborts_without_branch(tmp_path: Path, monkeypatch) -> None:
+def test_dirty_repo_uses_temporary_worktree(tmp_path: Path, monkeypatch) -> None:
     repo = _make_repo(tmp_path)
     transcript = _make_transcript(tmp_path)
     audio = _make_audio(tmp_path)
 
-    scripted = [(_is_git("status"), _ProcResult(0, " M file.txt\n", ""))]
+    scripted = [(_is_gh_pr_create, _ProcResult(0, "https://example/pr/1\n", ""))]
     run, calls = _fake_runner(scripted)
     monkeypatch.setattr(subprocess, "run", run)
     notify_mock = MagicMock()
@@ -193,15 +191,13 @@ def test_dirty_repo_aborts_without_branch(tmp_path: Path, monkeypatch) -> None:
         cfg=_cfg(repo),
     )
 
-    assert ok is False
-    assert not any(args[:2] == ["git", "checkout"] and "-b" in args for args in calls)
-    notify_mock.assert_called_once()
-    title, body = notify_mock.call_args.args
-    assert title == "PR 作成失敗"
-    assert "未コミット変更" in body
+    assert ok is True
+    assert any(args[:3] == ["git", "worktree", "add"] for args in calls)
+    assert any(args[:3] == ["git", "checkout", "-b"] for args in calls)
+    assert all(args[:2] != ["git", "status"] for args in calls)
 
 
-def test_push_failure_returns_false_and_restores_base(tmp_path: Path, monkeypatch) -> None:
+def test_push_failure_returns_false_and_removes_worktree(tmp_path: Path, monkeypatch) -> None:
     repo = _make_repo(tmp_path)
     transcript = _make_transcript(tmp_path)
     audio = _make_audio(tmp_path)
@@ -226,11 +222,10 @@ def test_push_failure_returns_false_and_restores_base(tmp_path: Path, monkeypatc
     assert ok is False
     notify_titles = [c.args[0] for c in notify_mock.call_args_list]
     assert notify_titles == ["PR 作成中…", "PR 作成失敗"]
-    # cleanup: a git checkout main was attempted
-    restore_attempts = [
-        args for args in calls if args[:3] == ["git", "checkout", "main"]
+    cleanup_attempts = [
+        args for args in calls if args[:3] == ["git", "worktree", "remove"]
     ]
-    assert restore_attempts, "expected git checkout main during cleanup"
+    assert cleanup_attempts, "expected temporary worktree cleanup"
 
 
 def test_gh_failure_returns_false(tmp_path: Path, monkeypatch) -> None:
@@ -301,8 +296,6 @@ def test_transcript_only_pr_omits_minutes_copy(tmp_path: Path, monkeypatch) -> N
     )
 
     assert ok is True
-    assert (repo / "transcript" / "meeting.transcript.md").exists()
-    assert not (repo / "transcript" / "summary").exists()
 
     pr_call = next(args for args in calls if args[:3] == ["gh", "pr", "create"])
     body = pr_call[pr_call.index("--body") + 1]
@@ -312,6 +305,17 @@ def test_transcript_only_pr_omits_minutes_copy(tmp_path: Path, monkeypatch) -> N
     add_call = next(args for args in calls if args[:2] == ["git", "add"])
     assert "transcript/meeting.transcript.md" in add_call
     assert not any("summary" in a for a in add_call)
+
+
+def test_stage_files_resolves_symlinked_worktree_path(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    worktree_alias = tmp_path / "worktree-alias"
+    worktree_alias.symlink_to(repo, target_is_directory=True)
+    transcript = _make_transcript(tmp_path)
+
+    rel_paths = auto_pr._stage_files(worktree_alias, _cfg(repo), transcript, None)
+
+    assert rel_paths == ["transcript/meeting.transcript.md"]
 
 
 def test_gh_repo_passes_R_flag(tmp_path: Path, monkeypatch) -> None:

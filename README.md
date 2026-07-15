@@ -183,12 +183,12 @@ CLI では macOS 通知センターに「議事録生成失敗」が届き、GUI
 
 ### 動作
 
-1. `repo_path` のローカルクローンが clean state であることを確認（dirty なら abort してユーザー作業を保護）
-2. `origin/<default_branch>` を fetch & ローカルを reset
-3. `<branch_prefix><YYYY-MM-DD>-<6文字ランダム英数字>` のブランチを切る
+1. `origin/<default_branch>` を fetch する
+2. 一時 `git worktree` を `origin/<default_branch>` から作成する（通常のローカルクローンには触れない）
+3. 一時 worktree 内で `<branch_prefix><YYYY-MM-DD>-<6文字ランダム英数字>` のブランチを切る
 4. `transcript_subdir` / `minutes_subdir` にトランスクリプトと議事録をコピーしてコミット
 5. push して `gh pr create`
-6. 最後にローカルクローンを `<default_branch>` に戻す
+6. 一時 worktree を削除する
 
 ### 警告（公開リポジトリ運用上の注意）
 
@@ -224,7 +224,7 @@ gh_repo = ""                               # 空なら origin remote から自�
 | `gh pr create` 成功直後 | `PR 作成完了` | PR の URL |
 | 任意ステップで失敗 | `PR 作成失敗` | 失敗理由（先頭 200 文字） |
 
-`repo_path` 不在や dirty 検知など、ブランチを作る前段の preflight 段階で abort した場合は「PR 作成中…」を出さず、失敗通知のみが届く。
+`repo_path` 不在や `git` / `gh` が見つからない場合など、ブランチを作る前段の preflight で abort した場合は「PR 作成中…」を出さず、失敗通知のみが届く。
 
 ### 失敗時の挙動
 
