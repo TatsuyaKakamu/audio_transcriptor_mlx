@@ -7,8 +7,11 @@ import secrets
 import shutil
 import string
 import subprocess
+import tempfile
 from collections import defaultdict
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 from app.config import AutoPRConfig
 from app.services import notifier
@@ -63,28 +66,25 @@ def publish_pair(
             branch=branch,
         )
 
-        _checkout_clean_base(repo_path, cfg.default_branch)
-        _run_git(repo_path, ["checkout", "-b", branch])
+        with _temporary_worktree(repo_path, cfg.default_branch) as worktree_path:
+            _run_git(worktree_path, ["checkout", "-b", branch])
 
-        rel_paths = _stage_files(repo_path, cfg, transcript_path, minutes_path)
-        _run_git(repo_path, ["add", "--", *rel_paths])
-        commit_msg = _format_template(cfg.commit_message_template, variables)
-        _run_git(repo_path, ["commit", "-m", commit_msg])
+            rel_paths = _stage_files(worktree_path, cfg, transcript_path, minutes_path)
+            _run_git(worktree_path, ["add", "--", *rel_paths])
+            commit_msg = _format_template(cfg.commit_message_template, variables)
+            _run_git(worktree_path, ["commit", "-m", commit_msg])
 
-        _run_git(repo_path, ["push", "-u", "origin", branch], timeout=_PUSH_TIMEOUT_SEC)
-        pr_url = _create_pr(repo_path, cfg, branch, variables)
+            _run_git(worktree_path, ["push", "-u", "origin", branch], timeout=_PUSH_TIMEOUT_SEC)
+            pr_url = _create_pr(worktree_path, cfg, branch, variables)
     except AutoPRError as e:
         logger.warning("auto_pr aborted: %s", e)
         notifier.notify("PR 作成失敗", str(e)[:200])
-        _try_restore_base(repo_path, cfg.default_branch)
         return False
     except Exception as e:  # noqa: BLE001 — never propagate
         logger.exception("auto_pr unexpected failure")
         notifier.notify("PR 作成失敗", f"{type(e).__name__}: {str(e)[:160]}")
-        _try_restore_base(repo_path, cfg.default_branch)
         return False
 
-    _try_restore_base(repo_path, cfg.default_branch)
     notifier.notify("PR 作成完了", pr_url or branch or "")
     logger.info("auto_pr created PR: %s (branch=%s)", pr_url, branch)
     return True
@@ -108,28 +108,34 @@ def _preflight(
         raise AutoPRError(f"transcript が見つかりません: {transcript_path}")
     if minutes_path is not None and not minutes_path.is_file():
         raise AutoPRError(f"minutes が見つかりません: {minutes_path}")
-    if _is_dirty(repo_path):
-        raise AutoPRError("ローカルクローンに未コミット変更あり")
+@contextmanager
+def _temporary_worktree(repo_path: Path, default_branch: str) -> Iterator[Path]:
+    """Yield a disposable worktree based on origin/default_branch."""
+    with tempfile.TemporaryDirectory(prefix="mlx-audio-transcriptor-") as temp_dir:
+        worktree_path = Path(temp_dir) / "worktree"
+        added = False
+        try:
+            _run_git(repo_path, ["fetch", "origin", default_branch])
+            _run_git(
+                repo_path,
+                ["worktree", "add", "--detach", str(worktree_path), f"origin/{default_branch}"],
+            )
+            added = True
+            yield worktree_path
+        finally:
+            if added:
+                _try_remove_worktree(repo_path, worktree_path)
 
 
-def _is_dirty(repo_path: Path) -> bool:
-    result = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=str(repo_path),
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=_GIT_TIMEOUT_SEC,
-    )
-    if result.returncode != 0:
-        raise AutoPRError(f"git status 失敗: {result.stderr.strip()[:160]}")
-    return bool(result.stdout.strip())
-
-
-def _checkout_clean_base(repo_path: Path, default_branch: str) -> None:
-    _run_git(repo_path, ["fetch", "origin", default_branch])
-    _run_git(repo_path, ["checkout", default_branch])
-    _run_git(repo_path, ["reset", "--hard", f"origin/{default_branch}"])
+def _try_remove_worktree(repo_path: Path, worktree_path: Path) -> None:
+    try:
+        _run_git(repo_path, ["worktree", "remove", "--force", str(worktree_path)])
+    except Exception:  # noqa: BLE001 — cleanup must not raise
+        logger.exception("failed to remove temporary worktree %s", worktree_path)
+        try:
+            _run_git(repo_path, ["worktree", "prune"])
+        except Exception:  # noqa: BLE001 — cleanup must not raise
+            logger.exception("failed to prune temporary worktree metadata")
 
 
 def _stage_files(
@@ -139,21 +145,22 @@ def _stage_files(
     minutes_path: Path | None,
 ) -> list[str]:
     rel_paths: list[str] = []
+    repo_root = repo_path.resolve()
 
-    transcript_dest_dir = (repo_path / cfg.transcript_subdir).resolve()
-    _ensure_within(repo_path, transcript_dest_dir, "transcript_subdir")
+    transcript_dest_dir = (repo_root / cfg.transcript_subdir).resolve()
+    _ensure_within(repo_root, transcript_dest_dir, "transcript_subdir")
     transcript_dest_dir.mkdir(parents=True, exist_ok=True)
     transcript_dest = transcript_dest_dir / transcript_path.name
     shutil.copy2(transcript_path, transcript_dest)
-    rel_paths.append(str(transcript_dest.relative_to(repo_path)))
+    rel_paths.append(str(transcript_dest.relative_to(repo_root)))
 
     if minutes_path is not None:
-        minutes_dest_dir = (repo_path / cfg.minutes_subdir).resolve()
-        _ensure_within(repo_path, minutes_dest_dir, "minutes_subdir")
+        minutes_dest_dir = (repo_root / cfg.minutes_subdir).resolve()
+        _ensure_within(repo_root, minutes_dest_dir, "minutes_subdir")
         minutes_dest_dir.mkdir(parents=True, exist_ok=True)
         minutes_dest = minutes_dest_dir / minutes_path.name
         shutil.copy2(minutes_path, minutes_dest)
-        rel_paths.append(str(minutes_dest.relative_to(repo_path)))
+        rel_paths.append(str(minutes_dest.relative_to(repo_root)))
 
     return rel_paths
 
@@ -219,20 +226,6 @@ def _run_git(
     if result.returncode != 0:
         raise AutoPRError(f"git {args[0]} 失敗: {result.stderr.strip()[:160]}")
     return result.stdout
-
-
-def _try_restore_base(repo_path: Path, default_branch: str) -> None:
-    try:
-        subprocess.run(
-            ["git", "checkout", default_branch],
-            cwd=str(repo_path),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=_GIT_TIMEOUT_SEC,
-        )
-    except Exception:  # noqa: BLE001 — cleanup must not raise
-        logger.exception("failed to restore base branch %s", default_branch)
 
 
 def _resolve_date(minutes_path: Path | None, audio_path: Path) -> str:

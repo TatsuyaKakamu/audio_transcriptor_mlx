@@ -68,8 +68,8 @@ _transcribe_one()  →  transcribe → markdown_writer → [minutes.run_for] →
 
 ### 自動 PR (`auto_pr.publish_pair()`)
 - 全例外を握り潰して `False` を返す（best-effort）。`False` のとき `_transcribe_one()` は `trash_source_after_success` をスキップする
-- preflight: `repo_path` 存在・`.git`・`git`/`gh` バイナリ・`git status --porcelain` が空（dirty なら abort）
-- `git reset --hard origin/<default_branch>` でクリーン状態にしてからブランチを作成
+- preflight: `repo_path` 存在・`.git`・`git`/`gh` バイナリ・トランスクリプトと議事録の存在を確認
+- `origin/<default_branch>` から一時 `git worktree` を作り、その中でブランチ作成・コミット・push・PR作成を完結する。通常のローカルクローンの変更・現在のブランチには触れない
 - `transcript_subdir` / `minutes_subdir` がリポジトリ外を指す場合は `relative_to()` で abort
 - テンプレート変数: `{date}`, `{transcript_name}`, `{minutes_name}`, `{topic}`, `{branch}`（未定義は空文字、構文エラー時は生のテンプレートを使用）
 - `config.toml.example` には**プレースホルダのみ**記載（実在パス・GitHub ID は書かない。config.toml 本体は gitignore 対象）
