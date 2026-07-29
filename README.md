@@ -2,8 +2,27 @@
 
 ![audio_transcriptor_mlx](https://raw.githubusercontent.com/TatsuyaKakamu/audio_transcriptor_mlx/main/docs/images/hero.jpg)
 
-macOS Apple Silicon 上で動作する、ローカル音声文字起こし GUI アプリ。  
-`wav` / `mp3` ファイルをドラッグ&ドロップすると `mlx-whisper` で文字起こしし、同フォルダに Markdown ファイルを保存する。
+macOS Apple Silicon 上で動作する、ローカル音声文字起こしツール。  
+`wav` / `mp3` を `mlx-whisper` で文字起こしし、同フォルダに Markdown ファイルを保存する。文字起こしから議事録生成まで、すべてローカルで完結する。
+
+監視フォルダに音声を置くだけで処理が走る**自動モード**と、ファイルをその都度処理する **GUI モード**がある。主な使い方は前者。
+
+## 主な使い方: iCloud フォルダの自動監視
+
+外出先で録音した音声を iCloud Drive に入れておくと、自宅の Mac が自動で取得して文字起こし・議事録生成し、指定した Git リポジトリへ Pull Request を作成する。GitHub アプリで当該リポジトリの通知を受け取る設定にしていれば、PR 作成の通知がスマホに届く。
+
+![外出先で録音した音声を iCloud Drive 経由で自宅の Mac に送り、自動で文字起こし・要約して GitHub の Pull Request を作成するまでの流れ](docs/images/icloud-auto-flow.jpg)
+
+この流れは 3 つの機能の組み合わせで動く。
+
+| 図の段階 | 使う機能 | 設定 |
+|---|---|---|
+| 3. Mac が自動で取得して文字起こし | [監視フォルダの自動処理](#使い方-b-監視フォルダの自動処理launchd) | `watch_dir` を iCloud Drive 配下に設定 |
+| 3. 要約（議事録）を生成 | [議事録生成（Ollama 連携）](#議事録生成ollama-連携) | `[minutes].enabled = true`（既定） |
+| 4. Pull Request を作成・プッシュ | [任意 Git リポジトリへの自動 PR](#任意-git-リポジトリへの自動-pr-auto_pr) | `[auto_pr].enabled = true`（既定 off） |
+| 5. スマホへの通知 | GitHub アプリの PR 通知（本ツールの機能ではない） | — |
+
+> **元の音源は既定でゴミ箱へ移動される**（自動 PR が無効、または PR 作成に成功した場合）。iCloud Drive を監視フォルダにする場合、削除は同期されて iPhone 側からも消える。音源を残したい場合は `config.toml` で `trash_source_after_success = false` を設定する。
 
 ## 動作環境
 
@@ -14,12 +33,12 @@ macOS Apple Silicon 上で動作する、ローカル音声文字起こし GUI �
 
 ## 2 つの使い方
 
-このアプリは 2 通りの使い方ができる。用途で選択する。
+このツールは 2 通りの使い方ができる。用途で選択する。
 
 | 使い方 | 向いている場面 | 操作 |
 |--------|---------------|------|
+| **B. 監視フォルダの自動処理**（主） | iCloud Drive や AirDrop で送った音声を放置で処理したい | LaunchAgent をインストール（初回のみ）。以降は監視フォルダに置くだけ |
 | **A. GUI アプリで手動文字起こし** | 任意のファイルをその都度処理したい | アプリを起動して `wav` / `mp3` をドラッグ&ドロップ |
-| **B. Downloads フォルダの自動監視** | iPhone から AirDrop で送った音声を放置で処理したい | LaunchAgent をインストール（初回のみ）。以降は `~/Downloads` に置くだけ |
 
 両方を併用してもよい。設定ファイル（`~/.config/mlx-audio-transcriptor/config.toml`）は GUI と CLI で共通で、議事録生成（Ollama 連携）も共通で動く。
 
@@ -79,9 +98,9 @@ python -m app.main
 
 複数ファイルを同時にドロップ可。逐次処理。
 
-## 使い方 B: Downloads フォルダの自動監視（launchd）
+## 使い方 B: 監視フォルダの自動処理（launchd）
 
-iPhone から AirDrop などで `~/Downloads` に音声が入ったら、GUI を開かずに自動で文字起こしし、元ファイルをゴミ箱へ送るバックグラウンドモード。
+監視フォルダに音声が入ったら、GUI を開かずに自動で文字起こしし、元ファイルをゴミ箱へ送るバックグラウンドモード。監視先は `watch_dir` で指定する（既定 `~/Downloads`）。
 
 ### セットアップ（初回のみ）
 
@@ -90,12 +109,37 @@ iPhone から AirDrop などで `~/Downloads` に音声が入ったら、GUI を
 ./scripts/uninstall-watcher.sh        # 解除
 ```
 
+### 監視フォルダを iCloud Drive にする
+
+監視先のフォルダを先に作る（`install-watcher.sh` は作成しない。フォルダが無いと警告を出して何も処理しない）。
+
+```bash
+mkdir -p ~/Library/Mobile\ Documents/com~apple~CloudDocs/Recordings
+```
+
+`~/.config/mlx-audio-transcriptor/config.toml` の `watch_dir` を書き換える。
+
+```toml
+watch_dir = "~/Library/Mobile Documents/com~apple~CloudDocs/Recordings"
+trash_source_after_success = false    # iCloud 上の音源を残したい場合
+```
+
+**変更後は `./scripts/install-watcher.sh` を再実行する。** launchd が監視するパスはインストール時に書き込まれるため、再実行しないと以前のフォルダを監視し続ける。
+
+iCloud 特有の注意:
+
+- **元音源の削除は同期される。** 既定の `trash_source_after_success = true` のままだと、処理後に iCloud 上の音源がゴミ箱へ移動し、iPhone 側からも消える。残したい場合は `false` にする
+- **ローカルに保持しておく。** 本ツールは iCloud のダウンロード状態を検出せず、ファイルサイズと更新時刻が安定したかどうかだけを見る。監視フォルダは Finder で「このMacにダウンロードを保持」を選ぶ。クラウドアイコンが残っている場合は、ダウンロード完了後に置き直す
+- **監視するのは `watch_dir` の直下のみ。** サブフォルダは見ない
+
 ### 使い方
 
-1. `~/Downloads` に `.wav` / `.mp3` を保存する（AirDrop / コピーなど）
+1. 監視フォルダに `.wav` / `.mp3` を保存する（iCloud Drive / AirDrop / コピーなど）
 2. 数十秒待つと同フォルダに `*.transcript.md`（および議事録 `.md`）が生成される
 3. 元の音源は自動でゴミ箱へ移動される（`trash_source_after_success = false` で無効化可）
 4. 処理開始 / 25%・50%・75% 進捗 / 完了は macOS 通知センターへ届く
+
+さらに [`[auto_pr]`](#任意-git-リポジトリへの自動-pr-auto_pr) を有効にすると、文字起こしと議事録を Git リポジトリへ自動 PR できる（冒頭の図の流れ）。
 
 ### 詳細
 
@@ -281,7 +325,7 @@ mlx-audio-transcriptor/
 │   ├── install-watcher.sh             # LaunchAgent 設置
 │   └── uninstall-watcher.sh
 ├── docs/
-│   └── mac-watcher-setup.md           # Downloads 監視セットアップ手順
+│   └── mac-watcher-setup.md           # 監視フォルダ自動処理のセットアップ手順
 ├── config.toml.example
 └── tests/
     ├── test_file_naming.py
