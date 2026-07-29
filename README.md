@@ -1,6 +1,6 @@
 # audio_transcriptor_mlx
 
-![audio_transcriptor_mlx](https://raw.githubusercontent.com/TatsuyaKakamu/audio_transcriptor_mlx/main/docs/images/hero.jpg)
+![外出先で録音した音声を iCloud Drive 経由で自宅の Mac に送り、自動で文字起こし・要約して GitHub の Pull Request を作成するまでの流れ](docs/images/icloud-auto-flow.jpg)
 
 macOS Apple Silicon 上で動作する、ローカル音声文字起こしツール。  
 `wav` / `mp3` を `mlx-whisper` で文字起こしし、同フォルダに Markdown ファイルを保存する。文字起こしから議事録生成まで、すべてローカルで完結する。
@@ -9,9 +9,7 @@ macOS Apple Silicon 上で動作する、ローカル音声文字起こしツー
 
 ## 主な使い方: iCloud フォルダの自動監視
 
-外出先で録音した音声を iCloud Drive に入れておくと、自宅の Mac が自動で取得して文字起こし・議事録生成し、指定した Git リポジトリへ Pull Request を作成する。GitHub アプリで当該リポジトリの通知を受け取る設定にしていれば、PR 作成の通知がスマホに届く。
-
-![外出先で録音した音声を iCloud Drive 経由で自宅の Mac に送り、自動で文字起こし・要約して GitHub の Pull Request を作成するまでの流れ](docs/images/icloud-auto-flow.jpg)
+外出先で録音した音声を iCloud Drive に入れておくと、自宅の Mac が自動で取得して文字起こし・議事録生成し、指定した Git リポジトリへ Pull Request を作成する（冒頭の図）。GitHub アプリで当該リポジトリの通知を受け取る設定にしていれば、PR 作成の通知がスマホに届く。
 
 この流れは 3 つの機能の組み合わせで動く。
 
@@ -81,6 +79,8 @@ pip install -r requirements.txt
 ```
 
 ## 使い方 A: GUI アプリで手動文字起こし
+
+![GUI アプリの画面イメージ。wav / mp3 をドラッグ&ドロップし、言語とモデルを選んで文字起こしし、トランスクリプトと議事録を Markdown で出力する](docs/images/hero.jpg)
 
 ### 起動
 
