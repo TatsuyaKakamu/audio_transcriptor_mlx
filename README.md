@@ -1,6 +1,6 @@
 # audio_transcriptor_mlx
 
-![外出先で録音した音声を iCloud Drive 経由で自宅の Mac に送り、自動で文字起こし・要約して GitHub の Pull Request を作成するまでの流れ](docs/images/icloud-auto-flow.jpg)
+![外出先で録音した音声を iCloud Drive 経由で自宅の Mac に送り、自動で文字起こし・要約して GitHub の Pull Request を作成し、出先のスマホからその PR を読むまでの流れ](docs/images/icloud-auto-flow.jpg)
 
 macOS Apple Silicon 上で動作する、ローカル音声文字起こしツール。  
 `wav` / `mp3` を `mlx-whisper` で文字起こしし、同フォルダに Markdown ファイルを保存する。文字起こしから議事録生成まで、すべてローカルで完結する。
@@ -9,16 +9,16 @@ macOS Apple Silicon 上で動作する、ローカル音声文字起こしツー
 
 ## 主な使い方: iCloud フォルダの自動監視
 
-外出先で録音した音声を iCloud Drive に入れておくと、自宅の Mac が自動で取得して文字起こし・議事録生成し、指定した Git リポジトリへ Pull Request を作成する（冒頭の図）。GitHub アプリで当該リポジトリの通知を受け取る設定にしていれば、PR 作成の通知がスマホに届く。
+外出先で録音した音声を iCloud Drive に入れておくと、自宅の Mac が自動で取得して文字起こし・議事録生成し、指定した Git リポジトリへ Pull Request を作成する（冒頭の図）。出先ではその PR を開いて文字起こしと議事録を読む。
 
-この流れは 3 つの機能の組み合わせで動く。
+図の Mac 上の 4 段階は、次の機能に対応する。
 
 | 図の段階 | 使う機能 | 設定 |
 |---|---|---|
-| 3. Mac が自動で取得して文字起こし | [監視フォルダの自動処理](#使い方-b-監視フォルダの自動処理launchd) | `watch_dir` を iCloud Drive 配下に設定 |
-| 3. 要約（議事録）を生成 | [議事録生成（Ollama 連携）](#議事録生成ollama-連携) | `[minutes].enabled = true`（既定） |
-| 4. Pull Request を作成・プッシュ | [任意 Git リポジトリへの自動 PR](#任意-git-リポジトリへの自動-pr-auto_pr) | `[auto_pr].enabled = true`（既定 off） |
-| 5. スマホへの通知 | GitHub アプリの PR 通知（本ツールの機能ではない） | — |
+| iCloud Drive の音声ファイルを検出 | [監視フォルダの自動処理](#使い方-b-監視フォルダの自動処理launchd) | `watch_dir` を iCloud Drive 配下に設定 |
+| Whisper（MLX）で文字起こし | 本体の文字起こし | `model` / `language` |
+| Ollama のローカル LLM で要約を生成 | [議事録生成（Ollama 連携）](#議事録生成ollama-連携) | `[minutes].enabled = true`（既定） |
+| Markdown にして Pull Request を作成 | [任意 Git リポジトリへの自動 PR](#任意-git-リポジトリへの自動-pr-auto_pr) | `[auto_pr].enabled = true`（既定 off） |
 
 > **元の音源は既定でゴミ箱へ移動される**（自動 PR が無効、または PR 作成に成功した場合）。iCloud Drive を監視フォルダにする場合、削除は同期されて iPhone 側からも消える。音源を残したい場合は `config.toml` で `trash_source_after_success = false` を設定する。
 
