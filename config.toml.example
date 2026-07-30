@@ -76,10 +76,12 @@ request_timeout_seconds = 600.0
 #
 # 有効化すると、トランスクリプト（および議事録）書き出し完了直後に
 # 指定したローカルクローンの Git リポジトリへ:
-#   1) origin/<default_branch> を fetch & ローカルを clean state に reset
-#   2) 新規ブランチ <branch_prefix><YYYY-MM-DD>-<6文字ランダム> を切る
-#   3) transcript_subdir / minutes_subdir に md をコピーしてコミット
-#   4) origin に push して `gh pr create` で PR を作成
+#   1) origin/<default_branch> を fetch する
+#   2) そこから一時 worktree を作る（通常のローカルクローンには触れない）
+#   3) 一時 worktree 内で新規ブランチ <branch_prefix><YYYY-MM-DD>-<6文字ランダム> を切る
+#   4) transcript_subdir / minutes_subdir に md をコピーしてコミット
+#   5) origin に push して `gh pr create` で PR を作成
+#   6) 一時 worktree を削除する
 # まで自動で行う。失敗してもトランスクリプト本体には影響しないが、
 # PR 作成失敗時は元音声のゴミ箱送り (trash_source_after_success) もスキップされる。
 #
