@@ -2,23 +2,41 @@ import bisect
 from pathlib import Path
 
 import numpy as np
-import soundfile as sf
 
 _SAMPLE_RATE = 16_000
 
 
 def _load_audio(source_path: Path) -> np.ndarray:
-    data, sr = sf.read(str(source_path), dtype="float32", always_2d=True)
-    mono = data.mean(axis=1)
-    if sr != _SAMPLE_RATE:
-        import resampy  # optional fast resample; falls back to soundfile's built-in if absent
-        mono = resampy.resample(mono, sr, _SAMPLE_RATE)
-    return mono.astype(np.float32)
+    # Decode via ffmpeg (same path mlx-whisper uses). The previous soundfile + resampy
+    # path silently disabled VAD for any non-16kHz file because resampy is not installed.
+    from mlx_whisper.audio import load_audio
+    return np.asarray(load_audio(str(source_path), sr=_SAMPLE_RATE), dtype=np.float32)
 
 
 def _get_vad_model():
     from silero_vad import load_silero_vad  # type: ignore[import]
     return load_silero_vad()
+
+
+def detect_speech_intervals(
+    audio: np.ndarray,
+    min_silence_ms: int = 500,
+    speech_pad_ms: int = 200,
+) -> list[tuple[float, float]]:
+    """Return speech intervals (orig_start_sec, orig_end_sec); empty if no speech."""
+    model = _get_vad_model()
+
+    from silero_vad import get_speech_timestamps  # type: ignore[import]
+
+    raw_ts = get_speech_timestamps(
+        audio,
+        model,
+        sampling_rate=_SAMPLE_RATE,
+        min_silence_duration_ms=min_silence_ms,
+        speech_pad_ms=speech_pad_ms,
+        return_seconds=False,
+    )
+    return [(seg["start"] / _SAMPLE_RATE, seg["end"] / _SAMPLE_RATE) for seg in raw_ts]
 
 
 def preprocess_with_vad(
@@ -33,31 +51,17 @@ def preprocess_with_vad(
     VAD-timeline timestamp back to the original timeline.
     """
     audio = _load_audio(source_path)
-    model = _get_vad_model()
+    kept_intervals = detect_speech_intervals(audio, min_silence_ms, speech_pad_ms)
 
-    from silero_vad import get_speech_timestamps  # type: ignore[import]
-
-    raw_ts = get_speech_timestamps(
-        audio,
-        model,
-        sampling_rate=_SAMPLE_RATE,
-        min_silence_duration_ms=min_silence_ms,
-        speech_pad_ms=speech_pad_ms,
-        return_seconds=False,
-    )
-
-    if not raw_ts:
+    if not kept_intervals:
         # No speech detected — return original audio unchanged.
         duration = len(audio) / _SAMPLE_RATE
         return audio, [(0.0, duration)]
 
-    chunks = []
-    kept_intervals: list[tuple[float, float]] = []
-    for seg in raw_ts:
-        start_idx, end_idx = seg["start"], seg["end"]
-        chunks.append(audio[start_idx:end_idx])
-        kept_intervals.append((start_idx / _SAMPLE_RATE, end_idx / _SAMPLE_RATE))
-
+    chunks = [
+        audio[round(start * _SAMPLE_RATE) : round(end * _SAMPLE_RATE)]
+        for start, end in kept_intervals
+    ]
     concatenated = np.concatenate(chunks)
     return concatenated, kept_intervals
 

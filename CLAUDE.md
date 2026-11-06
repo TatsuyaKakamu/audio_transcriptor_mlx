@@ -55,7 +55,10 @@ _transcribe_one()  →  transcribe → markdown_writer → [minutes.run_for] →
 `TranscriptionWorker` は `QThread` で動作。UI スレッドからワーカーへの直接呼び出しは禁止（Signal 経由のみ）。Signals: `log_message(level, message)`, `status_update(text)`, `progress(float)`, `finished(had_errors, success_count, failure_count)`。
 
 ### VAD タイムスタンプ
-`services/vad.py` は無音除去済み PCM 配列と元タイムラインへの対応区間リストを返す。`transcriber.py` の `normalize_segments()` が `remap_timestamp()` でタイムスタンプを元の時刻に戻す。VAD 失敗時はファイルパス文字列にフォールバックして処理を継続する。
+`services/vad.py` は無音除去済み PCM 配列と元タイムラインへの対応区間リストを返す。`transcriber.py` の `normalize_segments()` が `remap_timestamp()` でタイムスタンプを元の時刻に戻す。VAD 失敗時は警告ログを出し、ファイルパス文字列にフォールバックして処理を継続する。音声の読み込みは `mlx_whisper.audio.load_audio`（ffmpeg）で 16kHz mono に変換する（resampy は依存に無い）。
+
+### mixed 言語モード
+`language == "mixed"` のとき `transcriber._transcribe_mixed()` を通る。発話区間を `mixed_language.split_long_intervals()` で 30 秒以下に分割 → 区間ごとに `_detect_ja_en()`（mlx-whisper 内部の `ModelHolder` / `log_mel_spectrogram` / `detect_language` に依存。`n_mels` はモデルから取り、float16 で読む）→ `resolve_languages()` で短い・失敗・あいまいな区間は直前の言語を引き継ぐ → `group_by_language()` で同じ言語の連続区間をまとめ、グループごとに `mlx_whisper.transcribe(language=…)`。時刻はグループの区間で `remap_timestamp()` する。`ModelHolder` は dtype をキャッシュキーに含まないため、判定側も float16 で読むこと。判定用 mel は transcribe と同じく `log_mel_spectrogram(padding=N_SAMPLES)` で音声側を無音パディングしてから `pad_or_trim(axis=-2)` する（log-mel 空間を 0 で埋めると短い区間の判定が崩れる）。判定前に `_check_multilingual()` で英語専用モデルを止め、モデル読み込み失敗・判定の 3 回連続失敗・ImportError/OSError では判定を打ち切って直前の言語を継承する。進捗の母数は区間のサンプル数（音声長で打ち切り）// 160（mlx の tqdm の total と一致）。
 
 ### 通知
 `services/notifier.py` は `osascript` を `subprocess.run` で実行し、失敗は黙殺する。`transcriber.transcribe()` は `tqdm.tqdm` クラスを一時差し替えて `update()` フックからコールバックへ渡す。CLI 経路は開始・進捗（25/50/75%）・完了の 3 段階で通知する。GUI 経路（`TranscriptionWorker`）は完了時のみ通知する。議事録生成・PR 作成それぞれも「〜中…」「〜完了」「〜失敗」の 3 段階を通知する。
@@ -84,6 +87,6 @@ _transcribe_one()  →  transcribe → markdown_writer → [minutes.run_for] →
 
 `services/` 層は GUI なしで単体テスト可能。`tests/conftest.py` が `mlx_whisper` / `tqdm` のスタブを差し込むため macOS 以外でも動く。`minutes_generator.py` の autouse fixture `_block_real_http` が実 HTTP を遮断する。`auto_pr.py` は `subprocess.run` を `monkeypatch.setattr` で差し替えて検証する。
 
-`transcriber.py` と `vad.py` は `mlx-whisper` / `silero_vad` 依存のためテスト対象外。
+`transcriber.py` の mixed 経路は `vad._load_audio` / `vad.detect_speech_intervals` / `_detect_ja_en` / `mlx_whisper.transcribe` を monkeypatch してテストする。実際の mlx-whisper / silero_vad の推論はテスト対象外。
 
-テストファイル: `test_file_naming.py`, `test_markdown_writer.py`, `test_segment_merger.py`, `test_config.py`, `test_cli_scan.py`, `test_notifier.py`, `test_progress.py`, `test_minutes_generator.py`, `test_minutes_orchestrator.py`, `test_minutes_writer.py`, `test_auto_pr.py`
+テストファイル: `test_file_naming.py`, `test_markdown_writer.py`, `test_segment_merger.py`, `test_config.py`, `test_cli_scan.py`, `test_notifier.py`, `test_progress.py`, `test_minutes_generator.py`, `test_minutes_orchestrator.py`, `test_minutes_writer.py`, `test_auto_pr.py`, `test_vad.py`, `test_mixed_language.py`, `test_transcriber_mixed.py`

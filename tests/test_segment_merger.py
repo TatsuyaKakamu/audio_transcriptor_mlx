@@ -84,3 +84,24 @@ def test_question_mark_splits():
     ]
     result = merge_by_conversation(segs, silence_gap_sec=0.8, language="ja")
     assert len(result) == 2
+
+
+@pytest.mark.parametrize("language", ["ja", "mixed"])
+def test_spaceless_join_adds_space_between_ascii_words(language):
+    segs = [seg(0.0, 1.0, "We expect to finish it"), seg(1.1, 2.0, "by December")]
+    result = merge_by_conversation(segs, silence_gap_sec=0.8, language=language)
+    assert result[0].text == "We expect to finish it by December"
+
+
+@pytest.mark.parametrize("language", ["ja", "mixed"])
+def test_spaceless_join_after_comma(language):
+    segs = [seg(0.0, 1.0, "Sure,"), seg(1.1, 2.0, "we did")]
+    result = merge_by_conversation(segs, silence_gap_sec=0.8, language=language)
+    assert result[0].text == "Sure, we did"
+
+
+@pytest.mark.parametrize("language", ["ja", "mixed"])
+def test_spaceless_join_keeps_japanese_and_boundaries_tight(language):
+    segs = [seg(0.0, 1.0, "セキュア"), seg(1.1, 2.0, "ブート"), seg(2.1, 3.0, "SBOM"), seg(3.1, 4.0, "対応")]
+    result = merge_by_conversation(segs, silence_gap_sec=0.8, language=language)
+    assert result[0].text == "セキュアブートSBOM対応"

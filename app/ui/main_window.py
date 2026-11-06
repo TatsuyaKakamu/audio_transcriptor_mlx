@@ -20,8 +20,12 @@ from app.services import notifier
 from app.ui.drop_area import SUPPORTED_EXTENSIONS, DropArea
 from app.workers.transcription_worker import TranscriptionWorker
 
-_LANGUAGES = [("Japanese (ja)", "ja"), ("English (en)", "en")]
-_MODELS = ["tiny", "base", "small", "medium", "large-v3"]
+_LANGUAGES = [
+    ("Japanese (ja)", "ja"),
+    ("English (en)", "en"),
+    ("Auto (ja/en mixed)", "mixed"),
+]
+_MODELS = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"]
 _APP_ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "app_icon.svg"
 
 
