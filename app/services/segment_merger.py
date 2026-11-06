@@ -2,6 +2,26 @@ from app.models.types import Segment
 
 _SENTENCE_END = frozenset("。！？.!?")
 
+# Languages written without spaces, where English fragments still need one.
+_SPACELESS_LANGUAGES = frozenset({"ja", "mixed"})
+
+
+def _is_ascii_word_char(ch: str) -> bool:
+    return ch.isascii() and ch.isalnum()
+
+
+def _join(texts: list[str], language: str) -> str:
+    if language not in _SPACELESS_LANGUAGES:
+        return " ".join(texts)
+    joined = ""
+    for text in texts:
+        if joined and text and _is_ascii_word_char(text[0]) and (
+            _is_ascii_word_char(joined[-1]) or joined[-1] == ","
+        ):
+            joined += " "
+        joined += text
+    return joined
+
 
 def merge_by_conversation(
     segments: list[Segment],
@@ -13,7 +33,6 @@ def merge_by_conversation(
     if not segments:
         return []
 
-    joiner = "" if language == "ja" else " "
     result: list[Segment] = []
     block_start = segments[0].start_sec
     block_texts: list[str] = [segments[0].text.strip()]
@@ -25,7 +44,7 @@ def merge_by_conversation(
         ends_sentence = bool(prev.text.strip()) and prev.text.strip()[-1] in _SENTENCE_END
 
         if ends_sentence or gap >= silence_gap_sec or block_len > max_block_sec:
-            result.append(Segment(block_start, block_end, joiner.join(block_texts)))
+            result.append(Segment(block_start, block_end, _join(block_texts, language)))
             block_start = curr.start_sec
             block_texts = [curr.text.strip()]
         else:
@@ -33,5 +52,5 @@ def merge_by_conversation(
 
         block_end = curr.end_sec
 
-    result.append(Segment(block_start, block_end, joiner.join(block_texts)))
+    result.append(Segment(block_start, block_end, _join(block_texts, language)))
     return result

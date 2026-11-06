@@ -18,18 +18,12 @@ def _get_vad_model():
     return load_silero_vad()
 
 
-def preprocess_with_vad(
-    source_path: Path,
+def detect_speech_intervals(
+    audio: np.ndarray,
     min_silence_ms: int = 500,
     speech_pad_ms: int = 200,
-) -> tuple[np.ndarray, list[tuple[float, float]]]:
-    """Return (concatenated_speech_pcm, kept_intervals).
-
-    kept_intervals is a list of (orig_start_sec, orig_end_sec) for each
-    retained speech chunk, in order.  Use remap_timestamp() to convert a
-    VAD-timeline timestamp back to the original timeline.
-    """
-    audio = _load_audio(source_path)
+) -> list[tuple[float, float]]:
+    """Return speech intervals (orig_start_sec, orig_end_sec); empty if no speech."""
     model = _get_vad_model()
 
     from silero_vad import get_speech_timestamps  # type: ignore[import]
@@ -42,19 +36,32 @@ def preprocess_with_vad(
         speech_pad_ms=speech_pad_ms,
         return_seconds=False,
     )
+    return [(seg["start"] / _SAMPLE_RATE, seg["end"] / _SAMPLE_RATE) for seg in raw_ts]
 
-    if not raw_ts:
+
+def preprocess_with_vad(
+    source_path: Path,
+    min_silence_ms: int = 500,
+    speech_pad_ms: int = 200,
+) -> tuple[np.ndarray, list[tuple[float, float]]]:
+    """Return (concatenated_speech_pcm, kept_intervals).
+
+    kept_intervals is a list of (orig_start_sec, orig_end_sec) for each
+    retained speech chunk, in order.  Use remap_timestamp() to convert a
+    VAD-timeline timestamp back to the original timeline.
+    """
+    audio = _load_audio(source_path)
+    kept_intervals = detect_speech_intervals(audio, min_silence_ms, speech_pad_ms)
+
+    if not kept_intervals:
         # No speech detected — return original audio unchanged.
         duration = len(audio) / _SAMPLE_RATE
         return audio, [(0.0, duration)]
 
-    chunks = []
-    kept_intervals: list[tuple[float, float]] = []
-    for seg in raw_ts:
-        start_idx, end_idx = seg["start"], seg["end"]
-        chunks.append(audio[start_idx:end_idx])
-        kept_intervals.append((start_idx / _SAMPLE_RATE, end_idx / _SAMPLE_RATE))
-
+    chunks = [
+        audio[round(start * _SAMPLE_RATE) : round(end * _SAMPLE_RATE)]
+        for start, end in kept_intervals
+    ]
     concatenated = np.concatenate(chunks)
     return concatenated, kept_intervals
 

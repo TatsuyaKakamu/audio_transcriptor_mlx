@@ -158,3 +158,11 @@ def test_auto_pr_full_override(tmp_path: Path) -> None:
     assert cfg.auto_pr.pr_title_template == "PR for {date}"
     assert cfg.auto_pr.pr_body_template == "body"
     assert cfg.auto_pr.gh_repo == "owner/repo"
+
+
+def test_mixed_language_is_loaded(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('language = "mixed"\nmodel = "large-v3-turbo"\n', encoding="utf-8")
+    cfg = load_config(path)
+    assert cfg.language == "mixed"
+    assert cfg.model == "large-v3-turbo"

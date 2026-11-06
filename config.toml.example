@@ -6,9 +6,12 @@
 # 全ての項目は省略可。未指定ならコード内のデフォルトが使われる。
 
 # 文字起こしの既定言語 ("ja" / "en" など ISO 639-1)
+# "mixed" にすると、発話の区切りごとに ja / en を自動判定して文字起こしする
+# （日英が交互に話される会議向け。1 文の中の英単語程度は前後の言語に寄る）
 language = "ja"
 
-# 既定モデル名 ("tiny" / "base" / "small" / "medium" / "large-v3" もしくは任意)
+# 既定モデル名 ("tiny" / "base" / "small" / "medium" / "large-v3" / "large-v3-turbo" もしくは任意)
+# "mixed" では多言語に強い "large-v3-turbo" を推奨（".en" の英語専用モデルは使えない）
 # 未登録名は mlx-community/whisper-<name>-mlx として解決される
 model = "medium"
 
