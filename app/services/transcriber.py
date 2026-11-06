@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 from collections.abc import Callable
@@ -16,6 +17,8 @@ _MODEL_REPO_MAP: dict[str, str] = {
     "large-v3": "mlx-community/whisper-large-v3-mlx",
 }
 
+
+logger = logging.getLogger(__name__)
 
 _DEVNULL = open(os.devnull, "w")
 
@@ -54,6 +57,7 @@ def transcribe(
             from app.services.vad import preprocess_with_vad
             audio_input, kept_intervals = preprocess_with_vad(source_path)
         except Exception:
+            logger.warning("VAD failed for %s; transcribing without VAD", source_path, exc_info=True)
             audio_input = str(source_path)
             kept_intervals = None
 

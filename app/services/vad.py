@@ -2,18 +2,15 @@ import bisect
 from pathlib import Path
 
 import numpy as np
-import soundfile as sf
 
 _SAMPLE_RATE = 16_000
 
 
 def _load_audio(source_path: Path) -> np.ndarray:
-    data, sr = sf.read(str(source_path), dtype="float32", always_2d=True)
-    mono = data.mean(axis=1)
-    if sr != _SAMPLE_RATE:
-        import resampy  # optional fast resample; falls back to soundfile's built-in if absent
-        mono = resampy.resample(mono, sr, _SAMPLE_RATE)
-    return mono.astype(np.float32)
+    # Decode via ffmpeg (same path mlx-whisper uses). The previous soundfile + resampy
+    # path silently disabled VAD for any non-16kHz file because resampy is not installed.
+    from mlx_whisper.audio import load_audio
+    return np.asarray(load_audio(str(source_path), sr=_SAMPLE_RATE), dtype=np.float32)
 
 
 def _get_vad_model():
