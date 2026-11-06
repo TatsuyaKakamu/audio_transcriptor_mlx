@@ -8,6 +8,11 @@ from app.services import transcriber, vad
 SR = 16_000
 
 
+@pytest.fixture(autouse=True)
+def multilingual_model(monkeypatch):
+    monkeypatch.setattr(transcriber, "_check_multilingual", lambda _repo: None)
+
+
 @pytest.fixture
 def fake_audio(monkeypatch):
     # en speech at 0-5s, ja speech at 10-15s, 0.3s blip at 20s
@@ -223,3 +228,51 @@ def test_detect_ja_en_rejects_english_only_model(monkeypatch):
     monkeypatch.setattr(mw_transcribe.ModelHolder, "get_model", classmethod(lambda cls, p, d: EnglishOnly()))
     with pytest.raises(transcriber.NotMultilingualModelError):
         transcriber._detect_ja_en(np.zeros(SR, dtype=np.float32), "repo")
+
+
+def test_mixed_stops_on_english_only_model_before_detection(monkeypatch, fake_audio):
+    def english_only(_repo):
+        raise transcriber.NotMultilingualModelError("english only")
+
+    monkeypatch.setattr(transcriber, "_check_multilingual", english_only)
+    monkeypatch.setattr(transcriber, "_detect_ja_en", lambda _p, _r: pytest.fail("should not detect"))
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe", lambda _p, **_k: pytest.fail("should not transcribe"), raising=False)
+    with pytest.raises(transcriber.NotMultilingualModelError):
+        transcriber.transcribe(Path("x.wav"), "my-english-only", "mixed")
+
+
+def test_mixed_model_load_failure_disables_detection(monkeypatch, fake_audio):
+    def offline(_repo):
+        raise OSError("offline")
+
+    monkeypatch.setattr(transcriber, "_check_multilingual", offline)
+    monkeypatch.setattr(transcriber, "_detect_ja_en", lambda _p, _r: pytest.fail("should not detect"))
+    seen = []
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe",
+                        lambda _p, *, language, **_k: seen.append(language) or {"segments": []}, raising=False)
+    transcriber.transcribe(Path("x.wav"), "medium", "mixed")
+    assert seen == ["ja"]
+
+
+def test_mixed_failure_count_resets_after_success(monkeypatch):
+    audio = np.zeros(SR * 60, dtype=np.float32)
+    monkeypatch.setattr(vad, "_load_audio", lambda _p: audio)
+    monkeypatch.setattr(vad, "detect_speech_intervals", lambda _a: [(i * 6.0, i * 6.0 + 5.0) for i in range(6)])
+    outcomes = iter(["fail", "fail", "en", "fail", "fail", "ja"])
+    calls = []
+
+    def detect(_pcm, _repo):
+        outcome = next(outcomes)
+        calls.append(outcome)
+        if outcome == "fail":
+            raise RuntimeError("flaky")
+        return {"ja": 0.9, "en": 0.0} if outcome == "ja" else {"ja": 0.0, "en": 0.9}
+
+    seen = []
+    monkeypatch.setattr(transcriber, "_detect_ja_en", detect)
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe",
+                        lambda _p, *, language, **_k: seen.append(language) or {"segments": []}, raising=False)
+    transcriber.transcribe(Path("x.wav"), "medium", "mixed")
+    assert len(calls) == 6
+    # leading failures take the first reliable language (en); the last interval is ja
+    assert seen == ["en", "ja"]

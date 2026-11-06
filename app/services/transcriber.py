@@ -116,6 +116,14 @@ class NotMultilingualModelError(ValueError):
     pass
 
 
+def _check_multilingual(repo: str) -> None:
+    import mlx.core as mx
+    from mlx_whisper.transcribe import ModelHolder
+
+    if not ModelHolder.get_model(repo, mx.float16).is_multilingual:
+        raise NotMultilingualModelError(f"mixed language mode needs a multilingual model: {repo}")
+
+
 def _detect_ja_en(pcm, repo: str) -> dict[str, float]:
     # Relies on mlx-whisper internals (0.4.x); mirrors what mlx_whisper.transcribe does
     # for language=None, but lets us restrict the choice to ja/en per speech interval.
@@ -166,6 +174,13 @@ def _transcribe_mixed(
     probs: list[dict[str, float] | None] = []
     consecutive_failures = 0
     detection_disabled = False
+    try:
+        _check_multilingual(repo)
+    except NotMultilingualModelError:
+        raise
+    except Exception:
+        logger.warning("could not load %s for language detection", repo, exc_info=True)
+        detection_disabled = True
     for interval, duration in zip(intervals, durations):
         if detection_disabled or duration < ml.MIN_DETECT_SEC:
             probs.append(None)
@@ -184,8 +199,8 @@ def _transcribe_mixed(
             # stop retrying (each retry may re-attempt a model download).
             if isinstance(exc, (ImportError, OSError)) or consecutive_failures >= _MAX_DETECT_FAILURES:
                 detection_disabled = True
-                logger.warning("language detection disabled; unresolved intervals use %s",
-                               ml.DEFAULT_LANGUAGE)
+                logger.warning("language detection disabled; remaining intervals inherit the "
+                               "previous language (%s if none)", ml.DEFAULT_LANGUAGE)
 
     languages = ml.resolve_languages(durations, probs)
     groups = ml.group_by_language(intervals, languages)
@@ -194,7 +209,8 @@ def _transcribe_mixed(
 
     # tqdm in mlx_whisper counts mel frames (one per 160 samples).
     group_frames = [
-        sum(round(e * sample_rate) - round(s * sample_rate) for s, e in ivs) // 160
+        sum(min(round(e * sample_rate), len(audio)) - min(round(s * sample_rate), len(audio))
+            for s, e in ivs) // 160
         for _, ivs in groups
     ]
     total_frames = max(1, sum(group_frames))
