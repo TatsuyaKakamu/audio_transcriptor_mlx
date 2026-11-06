@@ -299,8 +299,8 @@ PR 作成中の任意のステップで失敗した場合、トランスクリ�
 `config.toml` の `language = "mixed"`（GUI では `Auto (ja/en mixed)`）にすると、発話の区切りごとに日本語／英語を自動判定して文字起こしする。
 
 - VAD で得た発話区間ごとに ja / en を判定する（候補は ja と en のみ。他の言語に誤判定されない）
-- 2 秒未満の区間や判定があいまいな区間は、直前の区間の言語を引き継ぐ
-- 同じ言語が続く区間をまとめて、その言語で文字起こしする。30 秒を超える区間は最も静かな点で分割する
+- 0.5 秒未満の区間や判定があいまいな区間は、直前の区間の言語を引き継ぐ
+- 同じ言語が続く区間をまとめて、その言語で文字起こしする。30 秒を超える区間は、15〜30 秒の範囲で最も静かな点で分割する
 - 1 文の中に英単語が混ざる程度の切り替えは、その区間の言語で書かれる
 - 区間ごとに言語判定と文字起こしを行うため、`ja` / `en` 固定より処理時間が長い
 - 英語専用モデル（`*.en`）は使えない
@@ -309,6 +309,8 @@ PR 作成中の任意のステップで失敗した場合、トランスクリ�
 language = "mixed"
 model = "large-v3-turbo"
 ```
+
+> VAD の音声読み込みを ffmpeg 経由に変更した。以前は 16kHz 以外（44.1/48kHz の一般的な録音）で VAD が黙って無効になっていたため、`ja` / `en` モードでも無音除去が効くようになり、区切りやタイムスタンプが以前と変わることがある。
 
 ## プロジェクト構成
 
@@ -325,6 +327,7 @@ mlx-audio-transcriptor/
 │   │   ├── transcriber.py             # mlx-whisper 呼び出し
 │   │   ├── vad.py                     # silero-vad 前処理・タイムスタンプ再マッピング
 │   │   ├── segment_merger.py          # 発話区間のマージ
+│   │   ├── mixed_language.py          # mixed モードの区間分割・言語確定・グループ化
 │   │   ├── markdown_writer.py         # Markdown 生成・保存
 │   │   ├── file_naming.py             # 連番ファイル名決定
 │   │   ├── notifier.py                # macOS 通知センター連携（CLI のみ）
@@ -349,6 +352,8 @@ mlx-audio-transcriptor/
     ├── test_markdown_writer.py
     ├── test_vad.py
     ├── test_segment_merger.py
+    ├── test_mixed_language.py
+    ├── test_transcriber_mixed.py
     ├── test_config.py
     ├── test_cli_scan.py
     ├── test_notifier.py

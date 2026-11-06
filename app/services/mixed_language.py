@@ -10,7 +10,7 @@ import numpy as np
 
 CANDIDATE_LANGUAGES: tuple[str, ...] = ("ja", "en")
 DEFAULT_LANGUAGE = "ja"
-MIN_DETECT_SEC = 2.0
+MIN_DETECT_SEC = 0.5
 
 Interval = tuple[float, float]
 

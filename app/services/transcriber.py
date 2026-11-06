@@ -19,6 +19,7 @@ _MODEL_REPO_MAP: dict[str, str] = {
 }
 
 MIXED_LANGUAGE = "mixed"
+_MAX_DETECT_FAILURES = 3
 
 _DECODE_OPTIONS = {
     "temperature": 0.0,
@@ -111,18 +112,26 @@ def _transcribe_single(
     return normalize_segments(result, kept_intervals)
 
 
+class NotMultilingualModelError(ValueError):
+    pass
+
+
 def _detect_ja_en(pcm, repo: str) -> dict[str, float]:
     # Relies on mlx-whisper internals (0.4.x); mirrors what mlx_whisper.transcribe does
     # for language=None, but lets us restrict the choice to ja/en per speech interval.
     import mlx.core as mx
-    from mlx_whisper.audio import N_FRAMES, log_mel_spectrogram, pad_or_trim
+    from mlx_whisper.audio import N_FRAMES, N_SAMPLES, log_mel_spectrogram, pad_or_trim
     from mlx_whisper.transcribe import ModelHolder
 
     from app.services.mixed_language import CANDIDATE_LANGUAGES
 
     # float16 matches mlx_whisper.transcribe's default; ModelHolder caches by path only.
     whisper_model = ModelHolder.get_model(repo, mx.float16)
-    mel = log_mel_spectrogram(pcm, n_mels=whisper_model.dims.n_mels)
+    if not whisper_model.is_multilingual:
+        raise NotMultilingualModelError(f"mixed language mode needs a multilingual model: {repo}")
+    # Pad with silent audio before the mel (not zeros in log-mel space) as transcribe does;
+    # short intervals would otherwise be dominated by an out-of-distribution constant.
+    mel = log_mel_spectrogram(pcm, n_mels=whisper_model.dims.n_mels, padding=N_SAMPLES)
     mel = pad_or_trim(mel, N_FRAMES, axis=-2).astype(mx.float16)
     _, probs = whisper_model.detect_language(mel)
     return {lang: float(probs.get(lang, 0.0)) for lang in CANDIDATE_LANGUAGES}
@@ -139,7 +148,7 @@ def _transcribe_mixed(
     from app.services import vad
 
     if model.endswith(".en"):
-        raise ValueError(f"mixed language mode needs a multilingual model, got {model!r}")
+        raise NotMultilingualModelError(f"mixed language mode needs a multilingual model, got {model!r}")
 
     audio = vad._load_audio(source_path)
     sample_rate = vad._SAMPLE_RATE
@@ -155,30 +164,39 @@ def _transcribe_mixed(
 
     durations = [end - start for start, end in intervals]
     probs: list[dict[str, float] | None] = []
-    attempted = failed = 0
+    consecutive_failures = 0
+    detection_disabled = False
     for interval, duration in zip(intervals, durations):
-        if duration < ml.MIN_DETECT_SEC:
+        if detection_disabled or duration < ml.MIN_DETECT_SEC:
             probs.append(None)
             continue
-        attempted += 1
         try:
             probs.append(_detect_ja_en(ml.slice_intervals(audio, [interval], sample_rate), repo))
-        except Exception:
-            failed += 1
-            logger.warning("language detection failed at %.1fs", interval[0], exc_info=failed == 1)
+            consecutive_failures = 0
+        except NotMultilingualModelError:
+            raise
+        except Exception as exc:
+            consecutive_failures += 1
+            logger.warning("language detection failed at %.1fs", interval[0],
+                           exc_info=consecutive_failures == 1)
             probs.append(None)
-    if attempted and failed == attempted:
-        logger.warning("language detection failed for every interval; falling back to %s",
-                       ml.DEFAULT_LANGUAGE)
+            # A missing model or changed internals fail identically for every interval;
+            # stop retrying (each retry may re-attempt a model download).
+            if isinstance(exc, (ImportError, OSError)) or consecutive_failures >= _MAX_DETECT_FAILURES:
+                detection_disabled = True
+                logger.warning("language detection disabled; unresolved intervals use %s",
+                               ml.DEFAULT_LANGUAGE)
 
     languages = ml.resolve_languages(durations, probs)
     groups = ml.group_by_language(intervals, languages)
     logger.info("mixed mode: %d intervals -> %d groups (%s)", len(intervals), len(groups),
                 ", ".join(f"{lang}:{len(ivs)}" for lang, ivs in groups))
 
-    pcms = [ml.slice_intervals(audio, ivs, sample_rate) for _, ivs in groups]
     # tqdm in mlx_whisper counts mel frames (one per 160 samples).
-    group_frames = [len(pcm) // 160 for pcm in pcms]
+    group_frames = [
+        sum(round(e * sample_rate) - round(s * sample_rate) for s, e in ivs) // 160
+        for _, ivs in groups
+    ]
     total_frames = max(1, sum(group_frames))
     offset = 0
 
@@ -192,9 +210,9 @@ def _transcribe_mixed(
 
     segments: list[Segment] = []
     try:
-        for (lang, ivs), pcm, frames in zip(groups, pcms, group_frames):
+        for (lang, ivs), frames in zip(groups, group_frames):
             result = mlx_whisper.transcribe(
-                pcm,
+                ml.slice_intervals(audio, ivs, sample_rate),
                 path_or_hf_repo=repo,
                 language=lang,
                 **_DECODE_OPTIONS,
@@ -210,7 +228,6 @@ def _transcribe_mixed(
     if progress_callback is not None:
         progress_callback(total_frames, total_frames, time.monotonic() - start)
 
-    segments.sort(key=lambda s: s.start_sec)
     return segments
 
 

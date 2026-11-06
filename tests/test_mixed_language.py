@@ -51,7 +51,7 @@ def test_resolve_inherits_for_short_failed_or_ambiguous():
         {"ja": 0.52, "en": 0.48},  # ambiguous
         {"ja": 0.95, "en": 0.01},
     ]
-    assert resolve_languages([5.0, 1.0, 5.0, 5.0, 5.0], probs) == ["en", "en", "en", "en", "ja"]
+    assert resolve_languages([5.0, 0.3, 5.0, 5.0, 5.0], probs) == ["en", "en", "en", "en", "ja"]
 
 
 def test_resolve_leading_unreliable_takes_first_reliable():
@@ -60,7 +60,7 @@ def test_resolve_leading_unreliable_takes_first_reliable():
 
 
 def test_resolve_all_unreliable_defaults_to_ja():
-    assert resolve_languages([1.0, 5.0], [None, None]) == ["ja", "ja"]
+    assert resolve_languages([0.3, 5.0], [None, None]) == ["ja", "ja"]
 
 
 def test_group_merges_consecutive_same_language_up_to_cap():
