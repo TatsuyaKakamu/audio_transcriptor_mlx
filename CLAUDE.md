@@ -73,6 +73,7 @@ _transcribe_one()  →  transcribe → markdown_writer → [minutes.run_for] →
 - 全例外を握り潰して `False` を返す（best-effort）。`False` のとき `_transcribe_one()` は `trash_source_after_success` をスキップする
 - preflight: `repo_path` 存在・`.git`・`git`/`gh` バイナリ・トランスクリプトと議事録の存在を確認
 - `origin/<default_branch>` から一時 `git worktree` を作り、その中でブランチ作成・コミット・push・PR作成を完結する。通常のローカルクローンの変更・現在のブランチには触れない
+- `mode = "direct"` では一時 worktree（detached）でコミットし `git push origin HEAD:refs/heads/<default_branch>` する。ブランチ作成と `gh` は使わない（preflight の `gh` 確認も省く）。拒否されたら `fetch` → `rebase origin/<default_branch>` して計 `_DIRECT_PUSH_ATTEMPTS`(3) 回まで push。rebase 失敗時は `rebase --abort` して失敗扱い。force push はしない。未知の `mode` は警告して `"pr"` に戻す
 - `transcript_subdir` / `minutes_subdir` がリポジトリ外を指す場合は `relative_to()` で abort
 - テンプレート変数: `{date}`, `{transcript_name}`, `{minutes_name}`, `{topic}`, `{branch}`（未定義は空文字、構文エラー時は生のテンプレートを使用）
 - `config.toml.example` には**プレースホルダのみ**記載（実在パス・GitHub ID は書かない。config.toml 本体は gitignore 対象）

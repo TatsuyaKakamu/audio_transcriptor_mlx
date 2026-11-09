@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 from collections import defaultdict
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
@@ -23,6 +24,19 @@ _GH_TIMEOUT_SEC = 60.0
 _PUSH_TIMEOUT_SEC = 120.0
 _DATE_PREFIX_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
 _ALPHABET = string.ascii_letters + string.digits
+_DIRECT_PUSH_ATTEMPTS = 3
+_NON_FAST_FORWARD_RE = re.compile(r"fetch first|non-fast-forward|\[rejected\]")
+
+
+@dataclass(frozen=True)
+class _Labels:
+    started: str
+    done: str
+    failed: str
+
+
+_PR_LABELS = _Labels(started="PR 作成中…", done="PR 作成完了", failed="PR 作成失敗")
+_DIRECT_LABELS = _Labels(started="コミット中…", done="コミット完了", failed="コミット失敗")
 
 
 class AutoPRError(Exception):
@@ -36,29 +50,36 @@ def publish_pair(
     audio_path: Path,
     cfg: AutoPRConfig,
 ) -> bool:
-    """Copy transcript (+ optional minutes) to cfg.repo_path, push a branch, open a PR.
+    """Copy transcript (+ optional minutes) to cfg.repo_path and publish it.
 
-    Returns True only when the PR was created successfully. Any failure is
+    mode "pr": push a new branch and open a PR.
+    mode "direct": commit on top of origin/default_branch and push it directly.
+
+    Returns True only when the publish step succeeded. Any failure is
     swallowed (logged + macOS notification) and returns False.
     """
     if not cfg.enabled:
         return False
 
+    direct = cfg.mode == "direct"
+    labels = _DIRECT_LABELS if direct else _PR_LABELS
+
     repo_path = Path(cfg.repo_path).expanduser()
     try:
-        _preflight(repo_path, cfg, transcript_path, minutes_path)
+        _preflight(repo_path, cfg, transcript_path, minutes_path, require_gh=not direct)
     except AutoPRError as e:
         logger.warning("auto_pr preflight aborted: %s", e)
-        notifier.notify("PR 作成失敗", str(e)[:200])
+        notifier.notify(labels.failed, str(e)[:200])
         return False
 
-    notifier.notify("PR 作成中…", f"→ {repo_path.name}")
-    logger.info("auto_pr starting (repo=%s)", repo_path)
+    notifier.notify(labels.started, f"→ {repo_path.name}")
+    logger.info("auto_pr starting (repo=%s, mode=%s)", repo_path, cfg.mode)
 
     branch: str | None = None
+    result_text = ""
     try:
         date_str = _resolve_date(minutes_path, audio_path)
-        branch = _build_branch_name(cfg.branch_prefix, date_str)
+        branch = cfg.default_branch if direct else _build_branch_name(cfg.branch_prefix, date_str)
         variables = _build_variables(
             date_str=date_str,
             transcript_path=transcript_path,
@@ -67,27 +88,70 @@ def publish_pair(
         )
 
         with _temporary_worktree(repo_path, cfg.default_branch) as worktree_path:
-            _run_git(worktree_path, ["checkout", "-b", branch])
+            if not direct:
+                _run_git(worktree_path, ["checkout", "-b", branch])
 
             rel_paths = _stage_files(worktree_path, cfg, transcript_path, minutes_path)
             _run_git(worktree_path, ["add", "--", *rel_paths])
             commit_msg = _format_template(cfg.commit_message_template, variables)
             _run_git(worktree_path, ["commit", "-m", commit_msg])
 
-            _run_git(worktree_path, ["push", "-u", "origin", branch], timeout=_PUSH_TIMEOUT_SEC)
-            pr_url = _create_pr(worktree_path, cfg, branch, variables)
+            if direct:
+                _push_direct(worktree_path, cfg.default_branch)
+                result_text = f"{repo_path.name}@{cfg.default_branch}: {commit_msg}"
+            else:
+                _run_git(
+                    worktree_path, ["push", "-u", "origin", branch], timeout=_PUSH_TIMEOUT_SEC
+                )
+                result_text = _create_pr(worktree_path, cfg, branch, variables) or branch
     except AutoPRError as e:
         logger.warning("auto_pr aborted: %s", e)
-        notifier.notify("PR 作成失敗", str(e)[:200])
+        notifier.notify(labels.failed, str(e)[:200])
         return False
     except Exception as e:  # noqa: BLE001 — never propagate
         logger.exception("auto_pr unexpected failure")
-        notifier.notify("PR 作成失敗", f"{type(e).__name__}: {str(e)[:160]}")
+        notifier.notify(labels.failed, f"{type(e).__name__}: {str(e)[:160]}")
         return False
 
-    notifier.notify("PR 作成完了", pr_url or branch or "")
-    logger.info("auto_pr created PR: %s (branch=%s)", pr_url, branch)
+    notifier.notify(labels.done, result_text)
+    logger.info("auto_pr finished: %s (mode=%s, branch=%s)", result_text, cfg.mode, branch)
     return True
+
+
+def _push_direct(worktree_path: Path, default_branch: str) -> None:
+    """Push the detached HEAD commit to origin/default_branch.
+
+    If someone else pushed in the meantime (non-fast-forward), fetch and rebase
+    onto the new tip, then retry. Never force-push.
+    """
+    refspec = f"HEAD:refs/heads/{default_branch}"
+    last_error: AutoPRError | None = None
+    for attempt in range(_DIRECT_PUSH_ATTEMPTS):
+        if attempt > 0:
+            _run_git(worktree_path, ["fetch", "origin", default_branch])
+            try:
+                _run_git(worktree_path, ["rebase", f"origin/{default_branch}"])
+            except AutoPRError:
+                _try_rebase_abort(worktree_path)
+                raise
+        try:
+            _run_git(worktree_path, ["push", "origin", refspec], timeout=_PUSH_TIMEOUT_SEC)
+            return
+        except AutoPRError as e:
+            last_error = e
+            logger.warning("direct push attempt %d failed: %s", attempt + 1, e)
+            # 認証エラーや保護ブランチなど、rebase しても直らない拒否は再試行しない
+            if not _NON_FAST_FORWARD_RE.search(str(e)):
+                raise
+    assert last_error is not None
+    raise last_error
+
+
+def _try_rebase_abort(worktree_path: Path) -> None:
+    try:
+        _run_git(worktree_path, ["rebase", "--abort"])
+    except Exception:  # noqa: BLE001 — cleanup must not raise
+        logger.exception("failed to abort rebase in %s", worktree_path)
 
 
 def _preflight(
@@ -95,6 +159,8 @@ def _preflight(
     cfg: AutoPRConfig,
     transcript_path: Path,
     minutes_path: Path | None,
+    *,
+    require_gh: bool = True,
 ) -> None:
     if not repo_path.is_dir():
         raise AutoPRError(f"repo_path が存在しません: {repo_path}")
@@ -102,7 +168,7 @@ def _preflight(
         raise AutoPRError(f"git リポジトリではありません: {repo_path}")
     if shutil.which("git") is None:
         raise AutoPRError("git コマンドが見つかりません")
-    if shutil.which("gh") is None:
+    if require_gh and shutil.which("gh") is None:
         raise AutoPRError("gh CLI が見つかりません")
     if not transcript_path.is_file():
         raise AutoPRError(f"transcript が見つかりません: {transcript_path}")
@@ -224,7 +290,8 @@ def _run_git(
         timeout=timeout,
     )
     if result.returncode != 0:
-        raise AutoPRError(f"git {args[0]} 失敗: {result.stderr.strip()[:160]}")
+        # push の stderr は先頭が "To <remote>" で始まり理由が末尾に来るため、末尾を残す
+        raise AutoPRError(f"git {args[0]} 失敗: {result.stderr.strip()[-160:]}")
     return result.stdout
 
 

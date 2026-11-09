@@ -11,6 +11,8 @@ CONFIG_PATH = Path.home() / ".config" / "mlx-audio-transcriptor" / "config.toml"
 
 _DEFAULT_EXTENSIONS: frozenset[str] = frozenset({".wav", ".mp3"})
 
+AUTO_PR_MODES: frozenset[str] = frozenset({"pr", "direct"})
+
 
 @dataclass(frozen=True)
 class MinutesConfig:
@@ -42,6 +44,8 @@ class AutoPRConfig:
     pr_title_template: str = "add transcript for {date}"
     pr_body_template: str = _DEFAULT_PR_BODY_TEMPLATE
     gh_repo: str = ""
+    # "pr": ブランチを切って PR を作る / "direct": default_branch へ直接コミットして push する
+    mode: str = "pr"
 
 
 @dataclass(frozen=True)
@@ -91,7 +95,16 @@ def _parse_auto_pr(data: dict) -> AutoPRConfig:
         pr_title_template=str(data.get("pr_title_template", defaults.pr_title_template)),
         pr_body_template=str(data.get("pr_body_template", defaults.pr_body_template)),
         gh_repo=str(data.get("gh_repo", defaults.gh_repo)),
+        mode=_parse_auto_pr_mode(data.get("mode", defaults.mode)),
     )
+
+
+def _parse_auto_pr_mode(raw: object) -> str:
+    mode = str(raw).strip().lower()
+    if mode in AUTO_PR_MODES:
+        return mode
+    logger.warning("unknown auto_pr.mode %r; falling back to 'pr'", raw)
+    return "pr"
 
 
 def _parse(data: dict) -> AppConfig:
