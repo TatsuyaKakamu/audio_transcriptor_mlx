@@ -234,6 +234,10 @@ CLI では macOS 通知センターに「議事録生成失敗」が届き、GUI
 5. push して `gh pr create`
 6. 一時 worktree を削除する
 
+### PR を作らず main へ直接コミットする（`mode = "direct"`）
+
+`mode = "direct"` にすると、上の 3・5 を行わず、`origin/<default_branch>` の上にコミットして `HEAD:<default_branch>` へ直接 push する（`gh` は不要）。他の push と競合して拒否された場合は fetch → rebase して最大 3 回まで再試行する（認証エラーや保護ブランチなど、それ以外の拒否は再試行しない）。force push はしない。レビューを経ずに全文が main に入る点と、保護ブランチでは必ず失敗する点に注意。rebase が衝突した場合や再試行を使い切った場合は失敗扱い（`PR 作成失敗` と同じ扱いで元音声は残る）。通知のタイトルは `コミット中…` / `コミット完了` / `コミット失敗` になる。
+
 ### 警告（公開リポジトリ運用上の注意）
 
 - この機能は **トランスクリプト全文を push 先リポジトリにコミットする**。録音内容に機微情報を含む可能性がある場合、push 先は **private リポジトリに限定** すること。
@@ -256,6 +260,7 @@ commit_message_template = "add transcript for {date}"
 pr_title_template       = "add transcript for {date}"
 pr_body_template = "..."                   # テンプレート変数: {date}, {transcript_name}, {minutes_name}, {topic}, {branch}
 gh_repo = ""                               # 空なら origin remote から自動推定
+mode = "pr"                                # "pr" または "direct"（default_branch へ直接 push）
 ```
 
 ### 通知
@@ -269,6 +274,8 @@ gh_repo = ""                               # 空なら origin remote から自�
 | 任意ステップで失敗 | `PR 作成失敗` | 失敗理由（先頭 200 文字） |
 
 `repo_path` 不在や `git` / `gh` が見つからない場合など、ブランチを作る前段の preflight で abort した場合は「PR 作成中…」を出さず、失敗通知のみが届く。
+
+`mode = "direct"` のときはタイトルが `コミット中…` / `コミット完了`（本文は `<repo名>@<branch>: <コミットメッセージ>`）/ `コミット失敗` になり、preflight で `gh` は確認しない。
 
 ### 失敗時の挙動
 

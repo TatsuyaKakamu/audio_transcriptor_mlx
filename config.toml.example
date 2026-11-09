@@ -106,8 +106,13 @@ repo_path = "~/path/to/your-repo"
 transcript_subdir = ""
 minutes_subdir = ""
 
-# PR のベースブランチ
+# PR のベースブランチ（mode = "direct" のときは直接 push する先）
 default_branch = "main"
+
+# "pr": ブランチを切って PR を作成する (default)
+# "direct": PR を作らず default_branch へ直接コミットして push する（gh 不要）。
+#           競合で拒否されたら fetch → rebase して最大 3 回再試行。force push はしない。
+mode = "pr"
 
 # ブランチ名: <branch_prefix><YYYY-MM-DD>-<6文字ランダム英数字>
 branch_prefix = "auto-transcript/"

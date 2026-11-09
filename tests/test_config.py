@@ -166,3 +166,20 @@ def test_mixed_language_is_loaded(tmp_path: Path) -> None:
     cfg = load_config(path)
     assert cfg.language == "mixed"
     assert cfg.model == "large-v3-turbo"
+
+
+def test_auto_pr_mode_defaults_to_pr(tmp_path: Path) -> None:
+    cfg = load_config(tmp_path / "missing.toml")
+    assert cfg.auto_pr.mode == "pr"
+
+
+def test_auto_pr_mode_direct(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[auto_pr]\nmode = "Direct"\n', encoding="utf-8")
+    assert load_config(p).auto_pr.mode == "direct"
+
+
+def test_auto_pr_mode_unknown_falls_back_to_pr(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[auto_pr]\nmode = "merge"\n', encoding="utf-8")
+    assert load_config(p).auto_pr.mode == "pr"

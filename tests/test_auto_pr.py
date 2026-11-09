@@ -410,3 +410,147 @@ def test_format_template_unknown_var_blank() -> None:
 def test_format_template_malformed_returns_raw() -> None:
     raw = "broken {unclosed"
     assert auto_pr._format_template(raw, {"date": "x"}) == raw
+
+
+def _is_push(args):
+    return args[:2] == ["git", "push"]
+
+
+def test_direct_mode_commits_and_pushes_to_default_branch(tmp_path: Path, monkeypatch) -> None:
+    repo = _make_repo(tmp_path)
+    transcript = _make_transcript(tmp_path)
+    minutes = _make_minutes(tmp_path)
+    audio = _make_audio(tmp_path)
+
+    run, calls = _fake_runner([])
+    monkeypatch.setattr(subprocess, "run", run)
+    notify_mock = MagicMock()
+    monkeypatch.setattr(auto_pr.notifier, "notify", notify_mock)
+    # gh is not required in direct mode
+    monkeypatch.setattr(
+        auto_pr.shutil, "which", lambda name: None if name == "gh" else "/usr/bin/" + name
+    )
+
+    ok = auto_pr.publish_pair(
+        transcript_path=transcript,
+        minutes_path=minutes,
+        audio_path=audio,
+        cfg=_cfg(repo, mode="direct"),
+    )
+
+    assert ok is True
+    command_strings = [" ".join(c) for c in calls]
+    assert "git push origin HEAD:refs/heads/main" in command_strings
+    assert not any(args[:3] == ["git", "checkout", "-b"] for args in calls)
+    assert not any(args[0] == "gh" for args in calls)
+    assert not any("--force" in args for args in calls if args[:2] == ["git", "push"])
+    assert any(c.startswith("git worktree remove --force ") for c in command_strings)
+    notify_titles = [c.args[0] for c in notify_mock.call_args_list]
+    assert notify_titles == ["コミット中…", "コミット完了"]
+
+
+def test_direct_mode_retries_with_rebase_after_rejected_push(tmp_path: Path, monkeypatch) -> None:
+    repo = _make_repo(tmp_path)
+    transcript = _make_transcript(tmp_path)
+    audio = _make_audio(tmp_path)
+
+    push_results = iter([_ProcResult(1, "", " ! [rejected] HEAD -> main (fetch first)"), _ProcResult(0, "", "")])
+    calls: list[list[str]] = []
+
+    def run(args, **kwargs):
+        calls.append(list(args))
+        if _is_push(args):
+            return next(push_results)
+        return _ProcResult()
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(auto_pr.notifier, "notify", MagicMock())
+    monkeypatch.setattr(auto_pr.shutil, "which", lambda name: "/usr/bin/" + name)
+
+    ok = auto_pr.publish_pair(
+        transcript_path=transcript,
+        minutes_path=None,
+        audio_path=audio,
+        cfg=_cfg(repo, mode="direct"),
+    )
+
+    assert ok is True
+    assert sum(1 for a in calls if _is_push(a)) == 2
+    first_push = next(i for i, a in enumerate(calls) if _is_push(a))
+    after = [" ".join(a) for a in calls[first_push + 1 :]]
+    assert "git fetch origin main" in after
+    assert "git rebase origin/main" in after
+
+
+def test_direct_mode_gives_up_after_repeated_rejection(tmp_path: Path, monkeypatch) -> None:
+    repo = _make_repo(tmp_path)
+    transcript = _make_transcript(tmp_path)
+    audio = _make_audio(tmp_path)
+
+    scripted = [(_is_push, _ProcResult(1, "", " ! [rejected] HEAD -> main (fetch first)"))]
+    run, calls = _fake_runner(scripted)
+    monkeypatch.setattr(subprocess, "run", run)
+    notify_mock = MagicMock()
+    monkeypatch.setattr(auto_pr.notifier, "notify", notify_mock)
+    monkeypatch.setattr(auto_pr.shutil, "which", lambda name: "/usr/bin/" + name)
+
+    ok = auto_pr.publish_pair(
+        transcript_path=transcript,
+        minutes_path=None,
+        audio_path=audio,
+        cfg=_cfg(repo, mode="direct"),
+    )
+
+    assert ok is False
+    assert sum(1 for a in calls if _is_push(a)) == auto_pr._DIRECT_PUSH_ATTEMPTS
+    assert [c.args[0] for c in notify_mock.call_args_list][-1] == "コミット失敗"
+    assert any(a[:3] == ["git", "worktree", "remove"] for a in calls)
+
+
+def test_direct_mode_rebase_conflict_aborts(tmp_path: Path, monkeypatch) -> None:
+    repo = _make_repo(tmp_path)
+    transcript = _make_transcript(tmp_path)
+    audio = _make_audio(tmp_path)
+
+    scripted = [
+        (_is_push, _ProcResult(1, "", " ! [rejected] HEAD -> main (non-fast-forward)")),
+        (lambda a: a[:3] == ["git", "rebase", "origin/main"], _ProcResult(1, "", "conflict")),
+    ]
+    run, calls = _fake_runner(scripted)
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(auto_pr.notifier, "notify", MagicMock())
+    monkeypatch.setattr(auto_pr.shutil, "which", lambda name: "/usr/bin/" + name)
+
+    ok = auto_pr.publish_pair(
+        transcript_path=transcript,
+        minutes_path=None,
+        audio_path=audio,
+        cfg=_cfg(repo, mode="direct"),
+    )
+
+    assert ok is False
+    assert any(a == ["git", "rebase", "--abort"] for a in calls)
+    assert sum(1 for a in calls if _is_push(a)) == 1
+
+
+def test_direct_mode_does_not_retry_non_ff_unrelated_rejection(tmp_path: Path, monkeypatch) -> None:
+    repo = _make_repo(tmp_path)
+    transcript = _make_transcript(tmp_path)
+    audio = _make_audio(tmp_path)
+
+    scripted = [(_is_push, _ProcResult(1, "", "remote: error: GH006: Protected branch update failed"))]
+    run, calls = _fake_runner(scripted)
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(auto_pr.notifier, "notify", MagicMock())
+    monkeypatch.setattr(auto_pr.shutil, "which", lambda name: "/usr/bin/" + name)
+
+    ok = auto_pr.publish_pair(
+        transcript_path=transcript,
+        minutes_path=None,
+        audio_path=audio,
+        cfg=_cfg(repo, mode="direct"),
+    )
+
+    assert ok is False
+    assert sum(1 for a in calls if _is_push(a)) == 1
+    assert not any(a[:2] == ["git", "rebase"] for a in calls)
