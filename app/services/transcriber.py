@@ -28,16 +28,12 @@ _EN_RETRY_MIN_SEC = 3.0
 _EN_RETRY_MAX_CHARS_PER_SEC = 3.0
 _MIN_IDENTICAL_BLOCKS = 5
 
-# A single temperature disables mlx-whisper's fallback, so a window that loops on one
-# phrase was kept as-is. With a tuple, a window whose text compresses too well
-# (a loop) is decoded again at the next temperature. 2.4 also suits Japanese: normal
-# 30 s lines in past transcripts stay under 1.95 (99th percentile), loops reach 15+.
-# mlx-whisper also retries windows with avg_logprob < -1.0 (logprob_threshold, kept
-# because it also decides silence skipping) and keeps the last try even if it fails,
-# so the ladder stops at 0.4 to limit sampled noise and extra decoding time.
+# A single temperature skips mlx-whisper's fallback re-decoding. Enabling it
+# ((0.0, 0.2, 0.4) with compression_ratio_threshold=2.4) cost ~35% more time on a
+# 2 h meeting and recovered only ~2% text, so loops are collapsed afterwards instead
+# (_collapse_loops).
 _DECODE_OPTIONS = {
-    "temperature": (0.0, 0.2, 0.4),
-    "compression_ratio_threshold": 2.4,
+    "temperature": 0.0,
     "condition_on_previous_text": False,
     "no_speech_threshold": 0.6,
 }
@@ -295,7 +291,7 @@ def _transcribe_mixed(
 
 
 def _collapse_loops(segments: list[Segment]) -> list[Segment]:
-    # The last fallback temperature can still loop; collapse what remains.
+    # Whisper can loop on one phrase; keep one copy and mark the rest.
     from app.services.repetition import MARKER, collapse_repetitions
 
     collapsed = 0

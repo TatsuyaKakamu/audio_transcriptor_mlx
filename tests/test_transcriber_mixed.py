@@ -456,18 +456,13 @@ def test_single_language_passes_vad_options(monkeypatch):
     assert seen == {"threshold": 0.3, "min_silence_ms": 800, "speech_pad_ms": 400}
 
 
-def test_transcribe_collapses_repeated_phrases_and_enables_fallback(monkeypatch):
-    seen = {}
-
-    def fake_transcribe(_audio, **kw):
-        seen.update(kw)
+def test_transcribe_collapses_repeated_phrases(monkeypatch):
+    def fake_transcribe(_audio, **_kw):
         return {"segments": [{"start": 0.0, "end": 5.0, "text": "冒頭" + "お客様の" * 8 + "。"}]}
 
     monkeypatch.setattr(transcriber.mlx_whisper, "transcribe", fake_transcribe, raising=False)
     result = transcriber.transcribe(Path("x.wav"), "medium", "ja", vad=VadConfig(enabled=False))
     assert [s.text for s in result.segments] == ["冒頭お客様の[反復省略]。"]
-    assert isinstance(seen["temperature"], tuple) and len(seen["temperature"]) > 1
-    assert seen["compression_ratio_threshold"] == 2.4
 
 
 def test_identical_sentence_blocks_are_collapsed_keeping_span(monkeypatch):
