@@ -183,3 +183,26 @@ def test_auto_pr_mode_unknown_falls_back_to_pr(tmp_path: Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text('[auto_pr]\nmode = "merge"\n', encoding="utf-8")
     assert load_config(p).auto_pr.mode == "pr"
+
+
+def test_vad_and_mixed_defaults(tmp_path: Path) -> None:
+    from app.config import MixedConfig, VadConfig
+    cfg = load_config(tmp_path / "missing.toml")
+    assert cfg.vad == VadConfig()
+    assert cfg.vad.enabled is False
+    assert cfg.mixed == MixedConfig()
+
+
+def test_vad_and_mixed_override(tmp_path: Path) -> None:
+    p = tmp_path / "c.toml"
+    p.write_text(
+        "[vad]\nenabled = true\nthreshold = 0.3\nmin_silence_ms = 1000\nspeech_pad_ms = 400\n"
+        "[mixed]\nen_min_margin = 0.6\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(p)
+    assert cfg.vad.enabled is True
+    assert cfg.vad.threshold == 0.3
+    assert cfg.vad.min_silence_ms == 1000
+    assert cfg.vad.speech_pad_ms == 400
+    assert cfg.mixed.en_min_margin == 0.6

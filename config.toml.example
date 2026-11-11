@@ -43,6 +43,24 @@ trash_source_after_success = true
 #   1) `brew install ollama` などで Ollama をインストール
 #   2) `ollama serve` を起動
 #   3) `ollama pull gemma4` などで使うモデルを取得
+# VAD（無音区間の除去）。既定は無効。
+# 小さい声・遠い話者を無音と判定し、数十分単位で発話を捨てることがあるため、
+# 有効にする場合は threshold を下げるなどして欠落がないか確認すること。
+[vad]
+enabled = false
+# 発話と判定する確率のしきい値 (default: 0.5)。下げるほど小さい声を拾う
+threshold = 0.5
+# この長さ以上の無音で区間を区切る (default: 500)
+min_silence_ms = 500
+# 各発話区間の前後に足す余白 (default: 200)
+speech_pad_ms = 200
+
+# language = "mixed" のときの言語判定
+[mixed]
+# en と判定するのに必要な ja/en の確率差 (default: 0.5)。
+# ja 側は 0.2。日本語を英語と誤判定して中身を失う場合は上げる
+en_min_margin = 0.5
+
 [minutes]
 # false の場合、Ollama 連携を一切行わない (default: true)
 enabled = true

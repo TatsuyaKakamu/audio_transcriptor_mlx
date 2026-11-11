@@ -49,6 +49,23 @@ class AutoPRConfig:
 
 
 @dataclass(frozen=True)
+class VadConfig:
+    # 既定は無効。silero VAD は小さい声・遠い話者を無音と判定し、数十分単位で
+    # 発話を捨てることがあったため、明示的に有効化した場合だけ使う。
+    enabled: bool = False
+    threshold: float = 0.5
+    min_silence_ms: int = 500
+    speech_pad_ms: int = 200
+
+
+@dataclass(frozen=True)
+class MixedConfig:
+    # ja 以外（en）へ切り替えるのに必要な ja/en 確率差。ja 側の 0.2 より厳しくし、
+    # 日本語の区間を英語と誤判定して中身を失うのを防ぐ。
+    en_min_margin: float = 0.5
+
+
+@dataclass(frozen=True)
 class AppConfig:
     language: str = "ja"
     model: str = "medium"
@@ -58,6 +75,25 @@ class AppConfig:
     trash_source_after_success: bool = True
     minutes: MinutesConfig = field(default_factory=MinutesConfig)
     auto_pr: AutoPRConfig = field(default_factory=AutoPRConfig)
+    vad: VadConfig = field(default_factory=VadConfig)
+    mixed: MixedConfig = field(default_factory=MixedConfig)
+
+
+def _parse_vad(data: dict) -> VadConfig:
+    defaults = VadConfig()
+    return VadConfig(
+        enabled=bool(data.get("enabled", defaults.enabled)),
+        threshold=float(data.get("threshold", defaults.threshold)),
+        min_silence_ms=int(data.get("min_silence_ms", defaults.min_silence_ms)),
+        speech_pad_ms=int(data.get("speech_pad_ms", defaults.speech_pad_ms)),
+    )
+
+
+def _parse_mixed(data: dict) -> MixedConfig:
+    defaults = MixedConfig()
+    return MixedConfig(
+        en_min_margin=float(data.get("en_min_margin", defaults.en_min_margin)),
+    )
 
 
 def _parse_minutes(data: dict) -> MinutesConfig:
@@ -135,6 +171,12 @@ def _parse(data: dict) -> AppConfig:
     auto_pr_raw = data.get("auto_pr")
     auto_pr = _parse_auto_pr(auto_pr_raw) if isinstance(auto_pr_raw, dict) else AutoPRConfig()
 
+    vad_raw = data.get("vad")
+    vad = _parse_vad(vad_raw) if isinstance(vad_raw, dict) else VadConfig()
+
+    mixed_raw = data.get("mixed")
+    mixed = _parse_mixed(mixed_raw) if isinstance(mixed_raw, dict) else MixedConfig()
+
     return AppConfig(
         language=language,
         model=model,
@@ -144,6 +186,8 @@ def _parse(data: dict) -> AppConfig:
         trash_source_after_success=trash,
         minutes=minutes,
         auto_pr=auto_pr,
+        vad=vad,
+        mixed=mixed,
     )
 
 

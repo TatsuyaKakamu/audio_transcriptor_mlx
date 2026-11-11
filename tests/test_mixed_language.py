@@ -79,3 +79,13 @@ def test_slice_intervals_concatenates():
     out = slice_intervals(audio, [(0.0, 1.0), (2.0, 3.0)])
     assert len(out) == 2 * SR
     assert out[SR] == audio[2 * SR]
+
+
+def test_resolve_switch_margin_is_stricter_for_en():
+    probs = [{"ja": 0.9, "en": 0.05}, {"ja": 0.35, "en": 0.65}, {"ja": 0.1, "en": 0.9}]
+    assert resolve_languages([5.0] * 3, probs, switch_margin=0.5) == ["ja", "ja", "en"]
+
+
+def test_resolve_switch_margin_does_not_affect_ja():
+    probs = [{"ja": 0.05, "en": 0.9}, {"ja": 0.65, "en": 0.35}]
+    assert resolve_languages([5.0] * 2, probs, switch_margin=0.5) == ["en", "ja"]

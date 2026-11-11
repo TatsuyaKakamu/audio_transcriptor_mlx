@@ -7,6 +7,7 @@ from pathlib import Path
 import mlx_whisper
 import tqdm as _tqdm_module
 
+from app.config import MixedConfig, VadConfig
 from app.models.types import Segment, TranscriptionResult
 
 _MODEL_REPO_MAP: dict[str, str] = {
@@ -20,6 +21,11 @@ _MODEL_REPO_MAP: dict[str, str] = {
 
 MIXED_LANGUAGE = "mixed"
 _MAX_DETECT_FAILURES = 3
+# An en group whose output is this sparse is likely Japanese speech misjudged as
+# English (it came out as "Yeah." for 28 s); retry it as ja and keep the longer text.
+# Empty output is not retried: ja decoding of noise tends to hallucinate stock phrases.
+_EN_RETRY_MIN_SEC = 3.0
+_EN_RETRY_MAX_CHARS_PER_SEC = 3.0
 
 _DECODE_OPTIONS = {
     "temperature": 0.0,
@@ -55,14 +61,17 @@ def transcribe(
     model: str,
     language: str,
     progress_callback: Callable[[int, int, float], None] | None = None,
-    use_vad: bool = True,
+    vad: VadConfig | None = None,
+    mixed: MixedConfig | None = None,
 ) -> TranscriptionResult:
     repo = _MODEL_REPO_MAP.get(model, f"mlx-community/whisper-{model}-mlx")
+    vad = vad or VadConfig()
+    mixed = mixed or MixedConfig()
 
     if language == MIXED_LANGUAGE:
-        segments = _transcribe_mixed(source_path, model, repo, progress_callback, use_vad)
+        segments = _transcribe_mixed(source_path, model, repo, progress_callback, vad, mixed)
     else:
-        segments = _transcribe_single(source_path, repo, language, progress_callback, use_vad)
+        segments = _transcribe_single(source_path, repo, language, progress_callback, vad)
 
     from app.services.segment_merger import merge_by_conversation
     segments = merge_by_conversation(segments, language=language)
@@ -79,15 +88,20 @@ def _transcribe_single(
     repo: str,
     language: str,
     progress_callback: Callable[[int, int, float], None] | None,
-    use_vad: bool,
+    vad_cfg: VadConfig,
 ) -> list[Segment]:
     audio_input: str | object = str(source_path)
     kept_intervals = None
 
-    if use_vad:
+    if vad_cfg.enabled:
         try:
             from app.services.vad import preprocess_with_vad
-            audio_input, kept_intervals = preprocess_with_vad(source_path)
+            audio_input, kept_intervals = preprocess_with_vad(
+                source_path,
+                min_silence_ms=vad_cfg.min_silence_ms,
+                speech_pad_ms=vad_cfg.speech_pad_ms,
+                threshold=vad_cfg.threshold,
+            )
         except Exception:
             logger.warning("VAD failed for %s; transcribing without VAD", source_path, exc_info=True)
             audio_input = str(source_path)
@@ -150,7 +164,8 @@ def _transcribe_mixed(
     model: str,
     repo: str,
     progress_callback: Callable[[int, int, float], None] | None,
-    use_vad: bool,
+    vad_cfg: VadConfig,
+    mixed_cfg: MixedConfig,
 ) -> list[Segment]:
     from app.services import mixed_language as ml
     from app.services import vad
@@ -161,9 +176,14 @@ def _transcribe_mixed(
     audio = vad._load_audio(source_path)
     sample_rate = vad._SAMPLE_RATE
     intervals: list[tuple[float, float]] = []
-    if use_vad:
+    if vad_cfg.enabled:
         try:
-            intervals = vad.detect_speech_intervals(audio)
+            intervals = vad.detect_speech_intervals(
+                audio,
+                min_silence_ms=vad_cfg.min_silence_ms,
+                speech_pad_ms=vad_cfg.speech_pad_ms,
+                threshold=vad_cfg.threshold,
+            )
         except Exception:
             logger.warning("VAD failed for %s; using fixed windows", source_path, exc_info=True)
     if not intervals:
@@ -202,7 +222,7 @@ def _transcribe_mixed(
                 logger.warning("language detection disabled; remaining intervals inherit the "
                                "previous language (%s if none)", ml.DEFAULT_LANGUAGE)
 
-    languages = ml.resolve_languages(durations, probs)
+    languages = ml.resolve_languages(durations, probs, switch_margin=mixed_cfg.en_min_margin)
     groups = ml.group_by_language(intervals, languages)
     logger.info("mixed mode: %d intervals -> %d groups (%s)", len(intervals), len(groups),
                 ", ".join(f"{lang}:{len(ivs)}" for lang, ivs in groups))
@@ -215,8 +235,11 @@ def _transcribe_mixed(
     ]
     total_frames = max(1, sum(group_frames))
     offset = 0
+    retrying = False
 
     def on_group_progress(n: int, _total: int, elapsed: float) -> None:
+        if retrying:
+            return
         progress_callback(min(offset + n, total_frames), total_frames, elapsed)
 
     original_tqdm_cls = _tqdm_module.tqdm
@@ -227,12 +250,22 @@ def _transcribe_mixed(
     segments: list[Segment] = []
     try:
         for (lang, ivs), frames in zip(groups, group_frames):
+            pcm = ml.slice_intervals(audio, ivs, sample_rate)
             result = mlx_whisper.transcribe(
-                ml.slice_intervals(audio, ivs, sample_rate),
-                path_or_hf_repo=repo,
-                language=lang,
-                **_DECODE_OPTIONS,
+                pcm, path_or_hf_repo=repo, language=lang, **_DECODE_OPTIONS
             )
+            if lang != ml.DEFAULT_LANGUAGE and _looks_too_sparse(result, len(pcm) / sample_rate):
+                retrying = True
+                try:
+                    retry = mlx_whisper.transcribe(
+                        pcm, path_or_hf_repo=repo, language=ml.DEFAULT_LANGUAGE, **_DECODE_OPTIONS
+                    )
+                finally:
+                    retrying = False
+                if _text_len(retry) > _text_len(result):
+                    logger.info("en group at %.1fs was sparse; using %s retry",
+                                ivs[0][0], ml.DEFAULT_LANGUAGE)
+                    result = retry
             segments.extend(normalize_segments(result, ivs))
             # Windows skipped as silence never reach pbar.update, so advance by the
             # group's full length rather than the last reported n.
@@ -245,6 +278,17 @@ def _transcribe_mixed(
         progress_callback(total_frames, total_frames, time.monotonic() - start)
 
     return segments
+
+
+def _text_len(result: dict) -> int:
+    return sum(len(seg.get("text", "").strip()) for seg in result.get("segments", []))
+
+
+def _looks_too_sparse(result: dict, duration_sec: float) -> bool:
+    chars = _text_len(result)
+    if duration_sec < _EN_RETRY_MIN_SEC or chars == 0:
+        return False
+    return chars / duration_sec < _EN_RETRY_MAX_CHARS_PER_SEC
 
 
 def normalize_segments(

@@ -22,6 +22,7 @@ def detect_speech_intervals(
     audio: np.ndarray,
     min_silence_ms: int = 500,
     speech_pad_ms: int = 200,
+    threshold: float = 0.5,
 ) -> list[tuple[float, float]]:
     """Return speech intervals (orig_start_sec, orig_end_sec); empty if no speech."""
     model = _get_vad_model()
@@ -32,6 +33,7 @@ def detect_speech_intervals(
         audio,
         model,
         sampling_rate=_SAMPLE_RATE,
+        threshold=threshold,
         min_silence_duration_ms=min_silence_ms,
         speech_pad_ms=speech_pad_ms,
         return_seconds=False,
@@ -43,6 +45,7 @@ def preprocess_with_vad(
     source_path: Path,
     min_silence_ms: int = 500,
     speech_pad_ms: int = 200,
+    threshold: float = 0.5,
 ) -> tuple[np.ndarray, list[tuple[float, float]]]:
     """Return (concatenated_speech_pcm, kept_intervals).
 
@@ -51,7 +54,7 @@ def preprocess_with_vad(
     VAD-timeline timestamp back to the original timeline.
     """
     audio = _load_audio(source_path)
-    kept_intervals = detect_speech_intervals(audio, min_silence_ms, speech_pad_ms)
+    kept_intervals = detect_speech_intervals(audio, min_silence_ms, speech_pad_ms, threshold)
 
     if not kept_intervals:
         # No speech detected — return original audio unchanged.

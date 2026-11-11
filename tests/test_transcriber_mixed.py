@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from app.config import MixedConfig, VadConfig
 from app.services import transcriber, vad
 
 SR = 16_000
@@ -13,13 +14,19 @@ def multilingual_model(monkeypatch):
     monkeypatch.setattr(transcriber, "_check_multilingual", lambda _repo: None)
 
 
+@pytest.fixture(autouse=True)
+def vad_enabled(monkeypatch):
+    # VAD is off by default; these tests exercise the VAD-driven interval path.
+    monkeypatch.setattr(transcriber, "VadConfig", lambda: VadConfig(enabled=True))
+
+
 @pytest.fixture
 def fake_audio(monkeypatch):
     # en speech at 0-5s, ja speech at 10-15s, 0.3s blip at 20s
     audio = np.zeros(SR * 25, dtype=np.float32)
     monkeypatch.setattr(vad, "_load_audio", lambda _p: audio)
     monkeypatch.setattr(
-        vad, "detect_speech_intervals", lambda _a: [(0.0, 5.0), (10.0, 15.0), (20.0, 20.3)]
+        vad, "detect_speech_intervals", lambda _a, **_kw: [(0.0, 5.0), (10.0, 15.0), (20.0, 20.3)]
     )
     return audio
 
@@ -69,7 +76,7 @@ def test_mixed_vad_failure_uses_windows(monkeypatch):
     audio = np.random.default_rng(0).standard_normal(SR * 70).astype(np.float32)
     monkeypatch.setattr(vad, "_load_audio", lambda _p: audio)
 
-    def vad_boom(_a):
+    def vad_boom(_a, **_kw):
         raise RuntimeError("vad broken")
 
     monkeypatch.setattr(vad, "detect_speech_intervals", vad_boom)
@@ -141,7 +148,7 @@ def test_mixed_restores_tqdm_on_error(monkeypatch, fake_audio):
 def test_mixed_stops_detecting_after_repeated_failures(monkeypatch):
     audio = np.zeros(SR * 60, dtype=np.float32)
     monkeypatch.setattr(vad, "_load_audio", lambda _p: audio)
-    monkeypatch.setattr(vad, "detect_speech_intervals", lambda _a: [(i * 6.0, i * 6.0 + 5.0) for i in range(10)])
+    monkeypatch.setattr(vad, "detect_speech_intervals", lambda _a, **_kw: [(i * 6.0, i * 6.0 + 5.0) for i in range(10)])
     calls = []
 
     def boom(_pcm, _repo):
@@ -257,7 +264,7 @@ def test_mixed_model_load_failure_disables_detection(monkeypatch, fake_audio):
 def test_mixed_failure_count_resets_after_success(monkeypatch):
     audio = np.zeros(SR * 60, dtype=np.float32)
     monkeypatch.setattr(vad, "_load_audio", lambda _p: audio)
-    monkeypatch.setattr(vad, "detect_speech_intervals", lambda _a: [(i * 6.0, i * 6.0 + 5.0) for i in range(6)])
+    monkeypatch.setattr(vad, "detect_speech_intervals", lambda _a, **_kw: [(i * 6.0, i * 6.0 + 5.0) for i in range(6)])
     outcomes = iter(["fail", "fail", "en", "fail", "fail", "ja"])
     calls = []
 
@@ -276,3 +283,91 @@ def test_mixed_failure_count_resets_after_success(monkeypatch):
     assert len(calls) == 6
     # leading failures take the first reliable language (en); the last interval is ja
     assert seen == ["en", "ja"]
+
+
+def test_mixed_without_vad_covers_whole_file(monkeypatch):
+    audio = np.zeros(SR * 70, dtype=np.float32)
+    monkeypatch.setattr(vad, "_load_audio", lambda _p: audio)
+
+    def must_not_run(*_a, **_kw):
+        raise AssertionError("VAD must not run when disabled")
+
+    monkeypatch.setattr(vad, "detect_speech_intervals", must_not_run)
+    monkeypatch.setattr(transcriber, "_detect_ja_en", lambda _p, _r: {"ja": 0.9, "en": 0.0})
+    lengths = []
+
+    def fake_transcribe(pcm, **_kw):
+        lengths.append(len(pcm))
+        return {"segments": []}
+
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe", fake_transcribe, raising=False)
+    transcriber.transcribe(Path("x.wav"), "medium", "mixed", vad=VadConfig(enabled=False))
+    assert sum(lengths) == len(audio)
+
+
+def test_mixed_passes_vad_options(monkeypatch, fake_audio):
+    seen = {}
+
+    def fake_detect(_a, **kw):
+        seen.update(kw)
+        return [(0.0, 5.0)]
+
+    monkeypatch.setattr(vad, "detect_speech_intervals", fake_detect)
+    monkeypatch.setattr(transcriber, "_detect_ja_en", lambda _p, _r: {"ja": 0.9, "en": 0.0})
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe", lambda pcm, **_kw: {"segments": []},
+                        raising=False)
+    cfg = VadConfig(enabled=True, threshold=0.3, min_silence_ms=800, speech_pad_ms=400)
+    transcriber.transcribe(Path("x.wav"), "medium", "mixed", vad=cfg)
+    assert seen == {"threshold": 0.3, "min_silence_ms": 800, "speech_pad_ms": 400}
+
+
+def _en_then_retry(monkeypatch, en_text, ja_text):
+    monkeypatch.setattr(vad, "_load_audio", lambda _p: np.zeros(SR * 10, dtype=np.float32))
+    monkeypatch.setattr(vad, "detect_speech_intervals", lambda _a, **_kw: [(0.0, 10.0)])
+    monkeypatch.setattr(transcriber, "_detect_ja_en", lambda _p, _r: {"ja": 0.0, "en": 0.9})
+    calls = []
+
+    def fake_transcribe(pcm, *, language, **_kw):
+        calls.append(language)
+        text = en_text if language == "en" else ja_text
+        return {"segments": [{"start": 0.0, "end": 10.0, "text": text}]}
+
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe", fake_transcribe, raising=False)
+    result = transcriber.transcribe(Path("x.wav"), "medium", "mixed")
+    return calls, [s.text for s in result.segments]
+
+
+def test_sparse_en_group_is_retried_as_ja(monkeypatch):
+    calls, texts = _en_then_retry(monkeypatch, "Yeah.", "前提としてのフローということもあって対処しました")
+    assert calls == ["en", "ja"]
+    assert texts == ["前提としてのフローということもあって対処しました"]
+
+
+def test_dense_en_group_is_kept(monkeypatch):
+    en = "We should review the vulnerability handling flow before the next release."
+    calls, texts = _en_then_retry(monkeypatch, en, "はい")
+    assert calls == ["en"]
+    assert texts == [en]
+
+
+def test_sparse_retry_keeps_en_when_ja_is_not_longer(monkeypatch):
+    calls, texts = _en_then_retry(monkeypatch, "Yeah.", "")
+    assert calls == ["en", "ja"]
+    assert texts == ["Yeah."]
+
+
+def test_mixed_uses_en_min_margin(monkeypatch, fake_audio):
+    # en wins by a 0.3 margin: enough at the old 0.2 threshold, not at 0.5
+    monkeypatch.setattr(transcriber, "_detect_ja_en", lambda _p, _r: {"ja": 0.35, "en": 0.65})
+    langs = []
+
+    def fake_transcribe(pcm, *, language, **_kw):
+        langs.append(language)
+        return {"segments": []}
+
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe", fake_transcribe, raising=False)
+    transcriber.transcribe(Path("x.wav"), "medium", "mixed")
+    assert set(langs) == {"ja"}
+    langs.clear()
+    transcriber.transcribe(Path("x.wav"), "medium", "mixed", mixed=MixedConfig(en_min_margin=0.2))
+    assert "en" in langs

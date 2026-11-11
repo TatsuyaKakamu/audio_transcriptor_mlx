@@ -56,7 +56,12 @@ class TranscriptionWorker(QThread):
 
             try:
                 result = transcriber.transcribe(
-                    path, self._model, self._language, progress_callback=on_progress
+                    path,
+                    self._model,
+                    self._language,
+                    progress_callback=on_progress,
+                    vad=self._cfg.vad,
+                    mixed=self._cfg.mixed,
                 )
                 output_path = file_naming.resolve_output_path(path)
                 markdown_writer.write(result, output_path)
