@@ -454,3 +454,45 @@ def test_single_language_passes_vad_options(monkeypatch):
     cfg = VadConfig(enabled=True, threshold=0.3, min_silence_ms=800, speech_pad_ms=400)
     transcriber.transcribe(Path("x.wav"), "medium", "ja", vad=cfg)
     assert seen == {"threshold": 0.3, "min_silence_ms": 800, "speech_pad_ms": 400}
+
+
+def test_transcribe_collapses_repeated_phrases_and_enables_fallback(monkeypatch):
+    seen = {}
+
+    def fake_transcribe(_audio, **kw):
+        seen.update(kw)
+        return {"segments": [{"start": 0.0, "end": 5.0, "text": "冒頭" + "お客様の" * 8 + "。"}]}
+
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe", fake_transcribe, raising=False)
+    result = transcriber.transcribe(Path("x.wav"), "medium", "ja", vad=VadConfig(enabled=False))
+    assert [s.text for s in result.segments] == ["冒頭お客様の[反復省略]。"]
+    assert isinstance(seen["temperature"], tuple) and len(seen["temperature"]) > 1
+    assert seen["compression_ratio_threshold"] == 2.4
+
+
+def test_identical_sentence_blocks_are_collapsed_keeping_span(monkeypatch):
+    looped = [{"start": i * 2.0, "end": i * 2.0 + 2.0, "text": "ご視聴ありがとうございました。"} for i in range(8)]
+    tail = [{"start": 20.0, "end": 21.0, "text": "はい。"}, {"start": 22.0, "end": 23.0, "text": "はい。"}]
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe",
+                        lambda _a, **_kw: {"segments": looped + tail}, raising=False)
+    result = transcriber.transcribe(Path("x.wav"), "medium", "ja", vad=VadConfig(enabled=False))
+    assert [(s.start_sec, s.end_sec, s.text) for s in result.segments] == [
+        (0.0, 16.0, "ご視聴ありがとうございました。[反復省略]"),
+        (20.0, 21.0, "はい。"),
+        (22.0, 23.0, "はい。"),
+    ]
+
+
+def test_looping_ja_retry_does_not_win_on_length(monkeypatch):
+    en = {"segments": [{"start": 0.0, "end": 10.0, "text": "Okay, let us start the review now."}]}
+    ja = {"segments": [{"start": 0.0, "end": 10.0, "text": "お客様の" * 30}]}
+    assert transcriber._text_len(ja) < transcriber._text_len(en)
+
+
+@pytest.mark.parametrize(("repeats", "collapsed"), [(4, False), (5, True)])
+def test_identical_block_threshold(monkeypatch, repeats, collapsed):
+    segs = [{"start": i * 2.0, "end": i * 2.0 + 1.0, "text": "ありがとうございます。"} for i in range(repeats)]
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe",
+                        lambda _a, **_kw: {"segments": segs}, raising=False)
+    result = transcriber.transcribe(Path("x.wav"), "medium", "ja", vad=VadConfig(enabled=False))
+    assert (len(result.segments) == 1) == collapsed

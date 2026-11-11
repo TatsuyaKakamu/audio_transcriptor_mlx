@@ -60,6 +60,9 @@ VAD は既定で無効（`config.VadConfig.enabled = False`）。silero VAD が�
 ### mixed 言語モード
 `language == "mixed"` のとき `transcriber._transcribe_mixed()` を通る。発話区間を `mixed_language.split_long_intervals()` で 30 秒以下に分割 → 区間ごとに `_detect_ja_en()`（mlx-whisper 内部の `ModelHolder` / `log_mel_spectrogram` / `detect_language` に依存。`n_mels` はモデルから取り、float16 で読む）→ `resolve_languages()` で短い・失敗・あいまいな区間は直前の言語を引き継ぐ（en と判定するには `switch_margin` = `[mixed].en_min_margin` の厳しい確率差が要る。`switch_margin` 指定時、判定したが差が足りない区間は、1 位が ja なら ja、1 位が en なら直前を引き継ぐ。短い・失敗区間は従来どおり引き継ぐ） → `group_by_language()` で同じ言語の連続区間をまとめ、グループごとに `mlx_whisper.transcribe(language=…)`。en グループの結果が空でなく 3 秒以上で 1 秒あたり 3 文字未満なら ja で起こし直し、長い方を採る（起こし直し中は進捗を送らない。起こし直しの例外は警告して en の結果を残す）。時刻はグループの区間で `remap_timestamp()` する。`ModelHolder` は dtype をキャッシュキーに含まないため、判定側も float16 で読むこと。判定用 mel は transcribe と同じく `log_mel_spectrogram(padding=N_SAMPLES)` で音声側を無音パディングしてから `pad_or_trim(axis=-2)` する（log-mel 空間を 0 で埋めると短い区間の判定が崩れる）。判定前に `_check_multilingual()` で英語専用モデルを止め、モデル読み込み失敗・判定の 3 回連続失敗・ImportError/OSError では判定を打ち切って直前の言語を継承する。進捗の母数は区間のサンプル数（音声長で打ち切り）// 160（mlx の tqdm の total と一致）。
 
+### 反復の抑止
+Whisper が同じ語句をループして出力する対策は 2 段構え。(1) `transcriber._DECODE_OPTIONS` の `temperature` をタプル `(0.0, 0.2, 0.4)` にし、`compression_ratio_threshold=2.4` を超えた窓を次の温度で解き直す（単一値だと mlx-whisper の解き直しが働かない）。mlx-whisper は `avg_logprob < -1.0` の窓も解き直し、最後の試行が失敗でもそれを採るため、温度は 0.4 で止めてサンプリングの乱れと処理時間を抑える。`logprob_threshold` は無音判定にも使うため外さない。(2) それでも残ったループを `services/repetition.collapse_repetitions()` が会話ブロック単位で 1 回分に縮めて `[反復省略]` を付け、`_collapse_loops()` が同一テキストのブロックが 5 個以上続く場合（句点つきの文のループ）も 1 ブロックにまとめる。1 文字の単位は 10 回以上、4 文字未満は 10 回以上、10 文字未満は 5 回以上、10 文字以上の節は 3 回以上、文字を含まない単位（`、54` など。`ー〜` は文字扱いしない）は 10 回以上（1 文字なら 30 回以上）で縮める（「はい、はい」「えーーー」「1000000」を守るため）。mixed の en→ja 再試行の長さ比較（`_text_len`）も縮めた後の長さで行う。
+
 ### 通知
 `services/notifier.py` は `osascript` を `subprocess.run` で実行し、失敗は黙殺する。`transcriber.transcribe()` は `tqdm.tqdm` クラスを一時差し替えて `update()` フックからコールバックへ渡す。CLI 経路は開始・進捗（25/50/75%）・完了の 3 段階で通知する。GUI 経路（`TranscriptionWorker`）は完了時のみ通知する。議事録生成・PR 作成それぞれも「〜中…」「〜完了」「〜失敗」の 3 段階を通知する。
 
@@ -90,4 +93,4 @@ VAD は既定で無効（`config.VadConfig.enabled = False`）。silero VAD が�
 
 `transcriber.py` の mixed 経路は `vad._load_audio` / `vad.detect_speech_intervals` / `_detect_ja_en` / `mlx_whisper.transcribe` を monkeypatch してテストする。実際の mlx-whisper / silero_vad の推論はテスト対象外。
 
-テストファイル: `test_file_naming.py`, `test_markdown_writer.py`, `test_segment_merger.py`, `test_config.py`, `test_cli_scan.py`, `test_notifier.py`, `test_progress.py`, `test_minutes_generator.py`, `test_minutes_orchestrator.py`, `test_minutes_writer.py`, `test_auto_pr.py`, `test_vad.py`, `test_mixed_language.py`, `test_transcriber_mixed.py`
+テストファイル: `test_file_naming.py`, `test_markdown_writer.py`, `test_segment_merger.py`, `test_config.py`, `test_cli_scan.py`, `test_notifier.py`, `test_progress.py`, `test_minutes_generator.py`, `test_minutes_orchestrator.py`, `test_minutes_writer.py`, `test_auto_pr.py`, `test_vad.py`, `test_mixed_language.py`, `test_transcriber_mixed.py`, `test_repetition.py`

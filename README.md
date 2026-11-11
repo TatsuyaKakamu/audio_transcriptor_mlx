@@ -346,6 +346,7 @@ mlx-audio-transcriptor/
 │   │   ├── transcriber.py             # mlx-whisper 呼び出し
 │   │   ├── vad.py                     # silero-vad 前処理・タイムスタンプ再マッピング
 │   │   ├── segment_merger.py          # 発話区間のマージ
+│   │   ├── repetition.py              # Whisper の反復ループを [反復省略] に縮める
 │   │   ├── mixed_language.py          # mixed モードの区間分割・言語確定・グループ化
 │   │   ├── markdown_writer.py         # Markdown 生成・保存
 │   │   ├── file_naming.py             # 連番ファイル名決定
@@ -371,6 +372,7 @@ mlx-audio-transcriptor/
     ├── test_markdown_writer.py
     ├── test_vad.py
     ├── test_segment_merger.py
+    ├── test_repetition.py
     ├── test_mixed_language.py
     ├── test_transcriber_mixed.py
     ├── test_config.py

@@ -26,9 +26,18 @@ _MAX_DETECT_FAILURES = 3
 # Empty output is not retried: ja decoding of noise tends to hallucinate stock phrases.
 _EN_RETRY_MIN_SEC = 3.0
 _EN_RETRY_MAX_CHARS_PER_SEC = 3.0
+_MIN_IDENTICAL_BLOCKS = 5
 
+# A single temperature disables mlx-whisper's fallback, so a window that loops on one
+# phrase was kept as-is. With a tuple, a window whose text compresses too well
+# (a loop) is decoded again at the next temperature. 2.4 also suits Japanese: normal
+# 30 s lines in past transcripts stay under 1.95 (99th percentile), loops reach 15+.
+# mlx-whisper also retries windows with avg_logprob < -1.0 (logprob_threshold, kept
+# because it also decides silence skipping) and keeps the last try even if it fails,
+# so the ladder stops at 0.4 to limit sampled noise and extra decoding time.
 _DECODE_OPTIONS = {
-    "temperature": 0.0,
+    "temperature": (0.0, 0.2, 0.4),
+    "compression_ratio_threshold": 2.4,
     "condition_on_previous_text": False,
     "no_speech_threshold": 0.6,
 }
@@ -75,6 +84,7 @@ def transcribe(
 
     from app.services.segment_merger import merge_by_conversation
     segments = merge_by_conversation(segments, language=language)
+    segments = _collapse_loops(segments)
     return TranscriptionResult(
         source_path=source_path,
         language=language,
@@ -284,8 +294,45 @@ def _transcribe_mixed(
     return segments
 
 
+def _collapse_loops(segments: list[Segment]) -> list[Segment]:
+    # The last fallback temperature can still loop; collapse what remains.
+    from app.services.repetition import MARKER, collapse_repetitions
+
+    collapsed = 0
+    out: list[Segment] = []
+    for seg in segments:
+        text = collapse_repetitions(seg.text)
+        collapsed += text != seg.text
+        out.append(Segment(start_sec=seg.start_sec, end_sec=seg.end_sec, text=text))
+
+    # A looped sentence ending in "。" becomes one block per repeat, so also
+    # collapse runs of identical consecutive blocks. People do repeat a whole
+    # sentence ("ありがとうございます。") a few times, so this needs a longer run.
+    merged: list[Segment] = []
+    i = 0
+    while i < len(out):
+        j = i + 1
+        while j < len(out) and out[j].text == out[i].text:
+            j += 1
+        if j - i >= _MIN_IDENTICAL_BLOCKS:
+            text = out[i].text.strip()
+            if MARKER not in text:
+                text += MARKER
+            merged.append(Segment(out[i].start_sec, out[j - 1].end_sec, text))
+            collapsed += 1
+        else:
+            merged.extend(out[i:j])
+        i = j
+    if collapsed:
+        logger.info("collapsed repeated phrases in %d places", collapsed)
+    return merged
+
+
 def _text_len(result: dict) -> int:
-    return sum(len(seg.get("text", "").strip()) for seg in result.get("segments", []))
+    # Count looped text once so a looping retry does not win on length alone.
+    from app.services.repetition import collapse_repetitions
+
+    return sum(len(collapse_repetitions(seg.get("text", "").strip())) for seg in result.get("segments", []))
 
 
 def _looks_too_sparse(result: dict, duration_sec: float) -> bool:
