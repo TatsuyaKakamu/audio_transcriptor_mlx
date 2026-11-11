@@ -63,8 +63,8 @@ def resolve_languages(
     (None), or the normalized ja/en probability gap is below min_margin. A language
     other than DEFAULT_LANGUAGE needs the stricter switch_margin. When switch_margin
     is given, a measured interval that misses its margin falls back to
-    DEFAULT_LANGUAGE instead of inheriting, so en never carries over onto speech
-    that was measured and not clearly en. Leading unreliable intervals take the
+    DEFAULT_LANGUAGE if DEFAULT_LANGUAGE ranked first (so en does not carry over
+    onto speech leaning ja); if en ranked first it inherits as usual. Leading unreliable intervals take the
     first reliable language.
     """
     strict = switch_margin is not None
@@ -86,8 +86,10 @@ def resolve_languages(
         needed = min_margin if top == DEFAULT_LANGUAGE else switch_margin
         if margin >= needed:
             decided.append(top)
+        elif strict and top == DEFAULT_LANGUAGE:
+            decided.append(DEFAULT_LANGUAGE)
         else:
-            decided.append(DEFAULT_LANGUAGE if strict else None)
+            decided.append(None)
 
     first = next((lang for lang in decided if lang is not None), DEFAULT_LANGUAGE)
     resolved: list[str] = []

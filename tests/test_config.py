@@ -219,3 +219,17 @@ def test_invalid_vad_and_mixed_values_fall_back(tmp_path: Path) -> None:
     cfg = load_config(p)
     assert cfg.vad == VadConfig()
     assert cfg.mixed == MixedConfig()
+
+
+def test_vad_numbers_must_be_numeric(tmp_path: Path) -> None:
+    from app.config import VadConfig
+    p = tmp_path / "c.toml"
+    p.write_text('[vad]\nthreshold = "0.3"\nmin_silence_ms = inf\nspeech_pad_ms = 200.5\n',
+                 encoding="utf-8")
+    assert load_config(p).vad == VadConfig()
+
+
+def test_vad_integer_valued_float_is_accepted(tmp_path: Path) -> None:
+    p = tmp_path / "c.toml"
+    p.write_text("[vad]\nmin_silence_ms = 800.0\n", encoding="utf-8")
+    assert load_config(p).vad.min_silence_ms == 800

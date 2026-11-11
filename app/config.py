@@ -89,13 +89,17 @@ def _checked(section: str, key: str, data: dict, default, kind, ok) -> object:
             if not isinstance(raw, bool):
                 raise TypeError("not a boolean")
             value = raw
-        elif isinstance(raw, bool):
-            raise TypeError("boolean given for a number")
+        elif isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            raise TypeError("not a number")
+        elif kind is int:
+            if isinstance(raw, float) and not raw.is_integer():
+                raise ValueError("not an integer")
+            value = int(raw)
         else:
-            value = kind(raw)
+            value = float(raw)
         if not ok(value):
             raise ValueError("out of range")
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         logger.warning("invalid %s.%s %r; falling back to %r", section, key, raw, default)
         return default
     return value

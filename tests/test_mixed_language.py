@@ -91,9 +91,15 @@ def test_resolve_switch_margin_does_not_affect_ja():
     assert resolve_languages([5.0] * 2, probs, switch_margin=0.5) == ["en", "ja"]
 
 
-def test_resolve_ambiguous_after_en_falls_back_to_ja_when_strict():
-    probs = [{"ja": 0.0, "en": 0.9}, {"ja": 0.35, "en": 0.65}, {"ja": 0.52, "en": 0.48}, None]
-    assert resolve_languages([5.0, 5.0, 5.0, 5.0], probs, switch_margin=0.5) == ["en", "ja", "ja", "ja"]
+def test_resolve_ambiguous_ja_leaning_falls_back_to_ja_when_strict():
+    probs = [{"ja": 0.0, "en": 0.9}, {"ja": 0.52, "en": 0.48}, None]
+    assert resolve_languages([5.0, 5.0, 5.0], probs, switch_margin=0.5) == ["en", "ja", "ja"]
+
+
+def test_resolve_ambiguous_en_leaning_inherits_when_strict():
+    probs = [{"ja": 0.0, "en": 0.9}, {"ja": 0.35, "en": 0.65}, {"ja": 0.9, "en": 0.0},
+             {"ja": 0.35, "en": 0.65}]
+    assert resolve_languages([5.0] * 4, probs, switch_margin=0.5) == ["en", "en", "ja", "ja"]
 
 
 def test_resolve_short_or_failed_still_inherit_en_when_strict():
