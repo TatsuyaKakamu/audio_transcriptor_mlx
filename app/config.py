@@ -79,20 +79,46 @@ class AppConfig:
     mixed: MixedConfig = field(default_factory=MixedConfig)
 
 
+def _checked(section: str, key: str, data: dict, default, kind, ok) -> object:
+    """Read data[key] as kind; warn and fall back to default if invalid or out of range."""
+    if key not in data:
+        return default
+    raw = data[key]
+    try:
+        if kind is bool:
+            if not isinstance(raw, bool):
+                raise TypeError("not a boolean")
+            value = raw
+        elif isinstance(raw, bool):
+            raise TypeError("boolean given for a number")
+        else:
+            value = kind(raw)
+        if not ok(value):
+            raise ValueError("out of range")
+    except (TypeError, ValueError):
+        logger.warning("invalid %s.%s %r; falling back to %r", section, key, raw, default)
+        return default
+    return value
+
+
 def _parse_vad(data: dict) -> VadConfig:
-    defaults = VadConfig()
+    d = VadConfig()
     return VadConfig(
-        enabled=bool(data.get("enabled", defaults.enabled)),
-        threshold=float(data.get("threshold", defaults.threshold)),
-        min_silence_ms=int(data.get("min_silence_ms", defaults.min_silence_ms)),
-        speech_pad_ms=int(data.get("speech_pad_ms", defaults.speech_pad_ms)),
+        enabled=_checked("vad", "enabled", data, d.enabled, bool, lambda v: True),
+        threshold=_checked("vad", "threshold", data, d.threshold, float, lambda v: 0.0 < v < 1.0),
+        min_silence_ms=_checked("vad", "min_silence_ms", data, d.min_silence_ms, int,
+                                lambda v: v >= 0),
+        speech_pad_ms=_checked("vad", "speech_pad_ms", data, d.speech_pad_ms, int,
+                               lambda v: v >= 0),
     )
 
 
 def _parse_mixed(data: dict) -> MixedConfig:
-    defaults = MixedConfig()
+    d = MixedConfig()
+    # Below 0.2 en would be easier to pick than ja; at 1.0 or above en is never picked.
     return MixedConfig(
-        en_min_margin=float(data.get("en_min_margin", defaults.en_min_margin)),
+        en_min_margin=_checked("mixed", "en_min_margin", data, d.en_min_margin, float,
+                               lambda v: 0.2 <= v < 1.0),
     )
 
 

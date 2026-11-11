@@ -206,3 +206,16 @@ def test_vad_and_mixed_override(tmp_path: Path) -> None:
     assert cfg.vad.min_silence_ms == 1000
     assert cfg.vad.speech_pad_ms == 400
     assert cfg.mixed.en_min_margin == 0.6
+
+
+def test_invalid_vad_and_mixed_values_fall_back(tmp_path: Path) -> None:
+    from app.config import MixedConfig, VadConfig
+    p = tmp_path / "c.toml"
+    p.write_text(
+        '[vad]\nenabled = "true"\nthreshold = 1.5\nmin_silence_ms = -1\nspeech_pad_ms = "x"\n'
+        "[mixed]\nen_min_margin = 0.1\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(p)
+    assert cfg.vad == VadConfig()
+    assert cfg.mixed == MixedConfig()

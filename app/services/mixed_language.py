@@ -61,9 +61,13 @@ def resolve_languages(
 
     An interval is unreliable when it is shorter than min_sec, detection failed
     (None), or the normalized ja/en probability gap is below min_margin. A language
-    other than DEFAULT_LANGUAGE needs the stricter switch_margin (defaults to
-    min_margin). Leading unreliable intervals take the first reliable language.
+    other than DEFAULT_LANGUAGE needs the stricter switch_margin. When switch_margin
+    is given, a measured interval that misses its margin falls back to
+    DEFAULT_LANGUAGE instead of inheriting, so en never carries over onto speech
+    that was measured and not clearly en. Leading unreliable intervals take the
+    first reliable language.
     """
+    strict = switch_margin is not None
     if switch_margin is None:
         switch_margin = min_margin
     decided: list[str | None] = []
@@ -80,7 +84,10 @@ def resolve_languages(
         margin = (ranked[0][1] - ranked[1][1]) / total
         top = ranked[0][0]
         needed = min_margin if top == DEFAULT_LANGUAGE else switch_margin
-        decided.append(top if margin >= needed else None)
+        if margin >= needed:
+            decided.append(top)
+        else:
+            decided.append(DEFAULT_LANGUAGE if strict else None)
 
     first = next((lang for lang in decided if lang is not None), DEFAULT_LANGUAGE)
     resolved: list[str] = []

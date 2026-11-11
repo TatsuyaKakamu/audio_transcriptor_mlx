@@ -256,10 +256,14 @@ def _transcribe_mixed(
             )
             if lang != ml.DEFAULT_LANGUAGE and _looks_too_sparse(result, len(pcm) / sample_rate):
                 retrying = True
+                retry: dict = {}
                 try:
                     retry = mlx_whisper.transcribe(
                         pcm, path_or_hf_repo=repo, language=ml.DEFAULT_LANGUAGE, **_DECODE_OPTIONS
                     )
+                except Exception:
+                    logger.warning("%s retry failed at %.1fs; keeping en result",
+                                   ml.DEFAULT_LANGUAGE, ivs[0][0], exc_info=True)
                 finally:
                     retrying = False
                 if _text_len(retry) > _text_len(result):

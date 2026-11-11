@@ -1,3 +1,4 @@
+import functools
 from pathlib import Path
 
 import numpy as np
@@ -16,8 +17,11 @@ def multilingual_model(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def vad_enabled(monkeypatch):
-    # VAD is off by default; these tests exercise the VAD-driven interval path.
-    monkeypatch.setattr(transcriber, "VadConfig", lambda: VadConfig(enabled=True))
+    # VAD is off by default; most tests here drive the VAD interval path, so they
+    # get vad=VadConfig(enabled=True) unless they pass vad= themselves.
+    monkeypatch.setattr(
+        transcriber, "transcribe", functools.partial(transcriber.transcribe, vad=VadConfig(enabled=True))
+    )
 
 
 @pytest.fixture
@@ -371,3 +375,82 @@ def test_mixed_uses_en_min_margin(monkeypatch, fake_audio):
     langs.clear()
     transcriber.transcribe(Path("x.wav"), "medium", "mixed", mixed=MixedConfig(en_min_margin=0.2))
     assert "en" in langs
+
+
+def test_retry_suppresses_progress_and_stays_monotonic(monkeypatch):
+    monkeypatch.setattr(vad, "_load_audio", lambda _p: np.zeros(SR * 10, dtype=np.float32))
+    monkeypatch.setattr(vad, "detect_speech_intervals", lambda _a, **_kw: [(0.0, 10.0)])
+    monkeypatch.setattr(transcriber, "_detect_ja_en", lambda _p, _r: {"ja": 0.0, "en": 0.9})
+
+    def fake(pcm, *, language, **_kw):
+        import tqdm
+
+        total = len(pcm) // 160
+        with tqdm.tqdm(total=total) as pbar:
+            pbar.update(total if language == "en" else 1)
+        text = "Yeah." if language == "en" else "日本語の長い発言がここにあります"
+        return {"segments": [{"start": 0.0, "end": 10.0, "text": text}]}
+
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe", fake, raising=False)
+    progress = []
+    transcriber.transcribe(Path("x.wav"), "medium", "mixed",
+                           progress_callback=lambda n, t, e: progress.append(n))
+    assert progress == sorted(progress)
+    assert 1 not in progress  # the ja retry's update was not forwarded
+
+
+def test_short_sparse_en_group_is_not_retried(monkeypatch):
+    monkeypatch.setattr(vad, "_load_audio", lambda _p: np.zeros(SR * 10, dtype=np.float32))
+    monkeypatch.setattr(vad, "detect_speech_intervals", lambda _a, **_kw: [(0.0, 2.0)])
+    monkeypatch.setattr(transcriber, "_detect_ja_en", lambda _p, _r: {"ja": 0.0, "en": 0.9})
+    calls = []
+
+    def fake(pcm, *, language, **_kw):
+        calls.append(language)
+        return {"segments": [{"start": 0.0, "end": 2.0, "text": "OK"}]}
+
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe", fake, raising=False)
+    transcriber.transcribe(Path("x.wav"), "medium", "mixed")
+    assert calls == ["en"]
+
+
+def test_retry_failure_keeps_en_result(monkeypatch):
+    monkeypatch.setattr(vad, "_load_audio", lambda _p: np.zeros(SR * 10, dtype=np.float32))
+    monkeypatch.setattr(vad, "detect_speech_intervals", lambda _a, **_kw: [(0.0, 10.0)])
+    monkeypatch.setattr(transcriber, "_detect_ja_en", lambda _p, _r: {"ja": 0.0, "en": 0.9})
+
+    def fake(pcm, *, language, **_kw):
+        if language == "ja":
+            raise RuntimeError("boom")
+        return {"segments": [{"start": 0.0, "end": 10.0, "text": "Yeah."}]}
+
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe", fake, raising=False)
+    result = transcriber.transcribe(Path("x.wav"), "medium", "mixed")
+    assert [s.text for s in result.segments] == ["Yeah."]
+
+
+def test_single_language_skips_vad_when_disabled(monkeypatch):
+    def must_not_run(*_a, **_kw):
+        raise AssertionError("VAD must not run when disabled")
+
+    monkeypatch.setattr(vad, "preprocess_with_vad", must_not_run)
+    seen = []
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe",
+                        lambda audio, **_kw: seen.append(audio) or {"segments": []}, raising=False)
+    transcriber.transcribe(Path("x.wav"), "medium", "ja", vad=VadConfig(enabled=False))
+    assert seen == ["x.wav"]
+
+
+def test_single_language_passes_vad_options(monkeypatch):
+    seen = {}
+
+    def fake_pre(_path, **kw):
+        seen.update(kw)
+        return np.zeros(SR, dtype=np.float32), [(0.0, 1.0)]
+
+    monkeypatch.setattr(vad, "preprocess_with_vad", fake_pre)
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe", lambda a, **_kw: {"segments": []},
+                        raising=False)
+    cfg = VadConfig(enabled=True, threshold=0.3, min_silence_ms=800, speech_pad_ms=400)
+    transcriber.transcribe(Path("x.wav"), "medium", "ja", vad=cfg)
+    assert seen == {"threshold": 0.3, "min_silence_ms": 800, "speech_pad_ms": 400}
