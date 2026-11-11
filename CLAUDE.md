@@ -23,12 +23,12 @@ pytest tests/test_file_naming.py   # 特定テスト
 DropArea (DnD) → MainWindow → TranscriptionWorker (QThread)
                                   ↓
                           transcriber.transcribe()
-                                  ↓ (VAD前処理)
+                                  ↓ (VAD前処理。[vad].enabled のときだけ)
                           vad.preprocess_with_vad()  →  silero_vad で無音区間除去
                                   ↓
                           mlx_whisper.transcribe()
                                   ↓
-                          normalize_segments()  →  VADタイムラインを元タイムラインに再マッピング
+                          normalize_segments()  →  VADタイムラインを元タイムラインに再マッピング（VAD 有効時）
                                   ↓
                           file_naming.resolve_output_path()
                                   ↓
@@ -55,10 +55,10 @@ _transcribe_one()  →  transcribe → markdown_writer → [minutes.run_for] →
 `TranscriptionWorker` は `QThread` で動作。UI スレッドからワーカーへの直接呼び出しは禁止（Signal 経由のみ）。Signals: `log_message(level, message)`, `status_update(text)`, `progress(float)`, `finished(had_errors, success_count, failure_count)`。
 
 ### VAD タイムスタンプ
-`services/vad.py` は無音除去済み PCM 配列と元タイムラインへの対応区間リストを返す。`transcriber.py` の `normalize_segments()` が `remap_timestamp()` でタイムスタンプを元の時刻に戻す。VAD 失敗時は警告ログを出し、ファイルパス文字列にフォールバックして処理を継続する。音声の読み込みは `mlx_whisper.audio.load_audio`（ffmpeg）で 16kHz mono に変換する（resampy は依存に無い）。
+VAD は既定で無効（`config.VadConfig.enabled = False`）。silero VAD が小さい声・遠い話者を無音と判定し、数十分単位で発話を捨てたため。`transcriber.transcribe()` は `vad: VadConfig` / `mixed: MixedConfig` を受け取り、CLI・GUI は `AppConfig` の値を渡す。`services/vad.py` は無音除去済み PCM 配列と元タイムラインへの対応区間リストを返す。`transcriber.py` の `normalize_segments()` が `remap_timestamp()` でタイムスタンプを元の時刻に戻す。VAD 失敗時は警告ログを出し、ファイルパス文字列にフォールバックして処理を継続する。音声の読み込みは `mlx_whisper.audio.load_audio`（ffmpeg）で 16kHz mono に変換する（resampy は依存に無い）。
 
 ### mixed 言語モード
-`language == "mixed"` のとき `transcriber._transcribe_mixed()` を通る。発話区間を `mixed_language.split_long_intervals()` で 30 秒以下に分割 → 区間ごとに `_detect_ja_en()`（mlx-whisper 内部の `ModelHolder` / `log_mel_spectrogram` / `detect_language` に依存。`n_mels` はモデルから取り、float16 で読む）→ `resolve_languages()` で短い・失敗・あいまいな区間は直前の言語を引き継ぐ → `group_by_language()` で同じ言語の連続区間をまとめ、グループごとに `mlx_whisper.transcribe(language=…)`。時刻はグループの区間で `remap_timestamp()` する。`ModelHolder` は dtype をキャッシュキーに含まないため、判定側も float16 で読むこと。判定用 mel は transcribe と同じく `log_mel_spectrogram(padding=N_SAMPLES)` で音声側を無音パディングしてから `pad_or_trim(axis=-2)` する（log-mel 空間を 0 で埋めると短い区間の判定が崩れる）。判定前に `_check_multilingual()` で英語専用モデルを止め、モデル読み込み失敗・判定の 3 回連続失敗・ImportError/OSError では判定を打ち切って直前の言語を継承する。進捗の母数は区間のサンプル数（音声長で打ち切り）// 160（mlx の tqdm の total と一致）。
+`language == "mixed"` のとき `transcriber._transcribe_mixed()` を通る。発話区間を `mixed_language.split_long_intervals()` で 30 秒以下に分割 → 区間ごとに `_detect_ja_en()`（mlx-whisper 内部の `ModelHolder` / `log_mel_spectrogram` / `detect_language` に依存。`n_mels` はモデルから取り、float16 で読む）→ `resolve_languages()` で短い・失敗・あいまいな区間は直前の言語を引き継ぐ（en と判定するには `switch_margin` = `[mixed].en_min_margin` の厳しい確率差が要る。`switch_margin` 指定時、判定したが差が足りない区間は、1 位が ja なら ja、1 位が en なら直前を引き継ぐ。短い・失敗区間は従来どおり引き継ぐ） → `group_by_language()` で同じ言語の連続区間をまとめ、グループごとに `mlx_whisper.transcribe(language=…)`。en グループの結果が空でなく 3 秒以上で 1 秒あたり 3 文字未満なら ja で起こし直し、長い方を採る（起こし直し中は進捗を送らない。起こし直しの例外は警告して en の結果を残す）。時刻はグループの区間で `remap_timestamp()` する。`ModelHolder` は dtype をキャッシュキーに含まないため、判定側も float16 で読むこと。判定用 mel は transcribe と同じく `log_mel_spectrogram(padding=N_SAMPLES)` で音声側を無音パディングしてから `pad_or_trim(axis=-2)` する（log-mel 空間を 0 で埋めると短い区間の判定が崩れる）。判定前に `_check_multilingual()` で英語専用モデルを止め、モデル読み込み失敗・判定の 3 回連続失敗・ImportError/OSError では判定を打ち切って直前の言語を継承する。進捗の母数は区間のサンプル数（音声長で打ち切り）// 160（mlx の tqdm の total と一致）。
 
 ### 通知
 `services/notifier.py` は `osascript` を `subprocess.run` で実行し、失敗は黙殺する。`transcriber.transcribe()` は `tqdm.tqdm` クラスを一時差し替えて `update()` フックからコールバックへ渡す。CLI 経路は開始・進捗（25/50/75%）・完了の 3 段階で通知する。GUI 経路（`TranscriptionWorker`）は完了時のみ通知する。議事録生成・PR 作成それぞれも「〜中…」「〜完了」「〜失敗」の 3 段階を通知する。

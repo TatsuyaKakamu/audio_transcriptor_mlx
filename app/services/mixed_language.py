@@ -55,13 +55,21 @@ def resolve_languages(
     *,
     min_sec: float = MIN_DETECT_SEC,
     min_margin: float = 0.2,
+    switch_margin: float | None = None,
 ) -> list[str]:
     """Pick ja/en per interval; unreliable intervals inherit the previous language.
 
     An interval is unreliable when it is shorter than min_sec, detection failed
-    (None), or the normalized ja/en probability gap is below min_margin. Leading
-    unreliable intervals take the first reliable language.
+    (None), or the normalized ja/en probability gap is below min_margin. A language
+    other than DEFAULT_LANGUAGE needs the stricter switch_margin. When switch_margin
+    is given, a measured interval that misses its margin falls back to
+    DEFAULT_LANGUAGE if DEFAULT_LANGUAGE ranked first (so en does not carry over
+    onto speech leaning ja); if en ranked first it inherits as usual. Leading unreliable intervals take the
+    first reliable language.
     """
+    strict = switch_margin is not None
+    if switch_margin is None:
+        switch_margin = min_margin
     decided: list[str | None] = []
     for dur, p in zip(durations, probs):
         if p is None or dur < min_sec:
@@ -74,7 +82,14 @@ def resolve_languages(
             continue
         ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
         margin = (ranked[0][1] - ranked[1][1]) / total
-        decided.append(ranked[0][0] if margin >= min_margin else None)
+        top = ranked[0][0]
+        needed = min_margin if top == DEFAULT_LANGUAGE else switch_margin
+        if margin >= needed:
+            decided.append(top)
+        elif strict and top == DEFAULT_LANGUAGE:
+            decided.append(DEFAULT_LANGUAGE)
+        else:
+            decided.append(None)
 
     first = next((lang for lang in decided if lang is not None), DEFAULT_LANGUAGE)
     resolved: list[str] = []

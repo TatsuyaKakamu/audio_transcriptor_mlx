@@ -31,6 +31,26 @@ file_stability_seconds = 3.0
 # 有無で既処理判定される）
 trash_source_after_success = true
 
+# VAD（無音区間の除去）。既定は無効。
+# 小さい声・遠い話者を無音と判定し、数十分単位で発話を捨てることがあるため、
+# 有効にする場合は threshold を下げるなどして欠落がないか確認すること。
+[vad]
+enabled = false
+# 発話と判定する確率のしきい値 (default: 0.5)。下げるほど小さい声を拾う
+threshold = 0.5
+# この長さ以上の無音で区間を区切る (default: 500)
+min_silence_ms = 500
+# 各発話区間の前後に足す余白 (default: 200)
+speech_pad_ms = 200
+
+# language = "mixed" のときの言語判定
+[mixed]
+# en と判定するのに必要な ja/en の確率差 (default: 0.5)。
+# ja 側は 0.2 固定。0.2 以上 1.0 未満で指定する（範囲外は既定値に戻る）。
+# 日本語を英語と誤判定して中身を失う場合は上げる
+# 0.2 にしても以前の挙動には戻らない（差が足りず 1 位が ja の区間は常に ja になる）
+en_min_margin = 0.5
+
 # 議事録生成（Ollama 連携）
 #
 # 有効化すると、トランスクリプト書き出し直後にローカルの Ollama を呼び出して

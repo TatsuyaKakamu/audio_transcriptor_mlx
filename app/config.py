@@ -49,6 +49,23 @@ class AutoPRConfig:
 
 
 @dataclass(frozen=True)
+class VadConfig:
+    # 既定は無効。silero VAD は小さい声・遠い話者を無音と判定し、数十分単位で
+    # 発話を捨てることがあったため、明示的に有効化した場合だけ使う。
+    enabled: bool = False
+    threshold: float = 0.5
+    min_silence_ms: int = 500
+    speech_pad_ms: int = 200
+
+
+@dataclass(frozen=True)
+class MixedConfig:
+    # ja 以外（en）へ切り替えるのに必要な ja/en 確率差。ja 側の 0.2 より厳しくし、
+    # 日本語の区間を英語と誤判定して中身を失うのを防ぐ。
+    en_min_margin: float = 0.5
+
+
+@dataclass(frozen=True)
 class AppConfig:
     language: str = "ja"
     model: str = "medium"
@@ -58,6 +75,55 @@ class AppConfig:
     trash_source_after_success: bool = True
     minutes: MinutesConfig = field(default_factory=MinutesConfig)
     auto_pr: AutoPRConfig = field(default_factory=AutoPRConfig)
+    vad: VadConfig = field(default_factory=VadConfig)
+    mixed: MixedConfig = field(default_factory=MixedConfig)
+
+
+def _checked(section: str, key: str, data: dict, default, kind, ok) -> object:
+    """Read data[key] as kind; warn and fall back to default if invalid or out of range."""
+    if key not in data:
+        return default
+    raw = data[key]
+    try:
+        if kind is bool:
+            if not isinstance(raw, bool):
+                raise TypeError("not a boolean")
+            value = raw
+        elif isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            raise TypeError("not a number")
+        elif kind is int:
+            if isinstance(raw, float) and not raw.is_integer():
+                raise ValueError("not an integer")
+            value = int(raw)
+        else:
+            value = float(raw)
+        if not ok(value):
+            raise ValueError("out of range")
+    except (TypeError, ValueError, OverflowError):
+        logger.warning("invalid %s.%s %r; falling back to %r", section, key, raw, default)
+        return default
+    return value
+
+
+def _parse_vad(data: dict) -> VadConfig:
+    d = VadConfig()
+    return VadConfig(
+        enabled=_checked("vad", "enabled", data, d.enabled, bool, lambda v: True),
+        threshold=_checked("vad", "threshold", data, d.threshold, float, lambda v: 0.0 < v < 1.0),
+        min_silence_ms=_checked("vad", "min_silence_ms", data, d.min_silence_ms, int,
+                                lambda v: v >= 0),
+        speech_pad_ms=_checked("vad", "speech_pad_ms", data, d.speech_pad_ms, int,
+                               lambda v: v >= 0),
+    )
+
+
+def _parse_mixed(data: dict) -> MixedConfig:
+    d = MixedConfig()
+    # Below 0.2 en would be easier to pick than ja; at 1.0 or above en is never picked.
+    return MixedConfig(
+        en_min_margin=_checked("mixed", "en_min_margin", data, d.en_min_margin, float,
+                               lambda v: 0.2 <= v < 1.0),
+    )
 
 
 def _parse_minutes(data: dict) -> MinutesConfig:
@@ -135,6 +201,12 @@ def _parse(data: dict) -> AppConfig:
     auto_pr_raw = data.get("auto_pr")
     auto_pr = _parse_auto_pr(auto_pr_raw) if isinstance(auto_pr_raw, dict) else AutoPRConfig()
 
+    vad_raw = data.get("vad")
+    vad = _parse_vad(vad_raw) if isinstance(vad_raw, dict) else VadConfig()
+
+    mixed_raw = data.get("mixed")
+    mixed = _parse_mixed(mixed_raw) if isinstance(mixed_raw, dict) else MixedConfig()
+
     return AppConfig(
         language=language,
         model=model,
@@ -144,6 +216,8 @@ def _parse(data: dict) -> AppConfig:
         trash_source_after_success=trash,
         minutes=minutes,
         auto_pr=auto_pr,
+        vad=vad,
+        mixed=mixed,
     )
 
 

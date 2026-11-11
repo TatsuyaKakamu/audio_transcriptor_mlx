@@ -79,3 +79,29 @@ def test_slice_intervals_concatenates():
     out = slice_intervals(audio, [(0.0, 1.0), (2.0, 3.0)])
     assert len(out) == 2 * SR
     assert out[SR] == audio[2 * SR]
+
+
+def test_resolve_switch_margin_is_stricter_for_en():
+    probs = [{"ja": 0.9, "en": 0.05}, {"ja": 0.35, "en": 0.65}, {"ja": 0.1, "en": 0.9}]
+    assert resolve_languages([5.0] * 3, probs, switch_margin=0.5) == ["ja", "ja", "en"]
+
+
+def test_resolve_switch_margin_does_not_affect_ja():
+    probs = [{"ja": 0.05, "en": 0.9}, {"ja": 0.65, "en": 0.35}]
+    assert resolve_languages([5.0] * 2, probs, switch_margin=0.5) == ["en", "ja"]
+
+
+def test_resolve_ambiguous_ja_leaning_falls_back_to_ja_when_strict():
+    probs = [{"ja": 0.0, "en": 0.9}, {"ja": 0.52, "en": 0.48}, None]
+    assert resolve_languages([5.0, 5.0, 5.0], probs, switch_margin=0.5) == ["en", "ja", "ja"]
+
+
+def test_resolve_ambiguous_en_leaning_inherits_when_strict():
+    probs = [{"ja": 0.0, "en": 0.9}, {"ja": 0.35, "en": 0.65}, {"ja": 0.9, "en": 0.0},
+             {"ja": 0.35, "en": 0.65}]
+    assert resolve_languages([5.0] * 4, probs, switch_margin=0.5) == ["en", "en", "ja", "ja"]
+
+
+def test_resolve_short_or_failed_still_inherit_en_when_strict():
+    probs = [{"ja": 0.0, "en": 0.9}, {"ja": 0.9, "en": 0.0}, None]
+    assert resolve_languages([5.0, 0.3, 5.0], probs, switch_margin=0.5) == ["en", "en", "en"]

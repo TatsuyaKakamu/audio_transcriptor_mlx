@@ -72,7 +72,9 @@ def _transcribe_one(path: Path, cfg: AppConfig) -> None:
     logger.info("transcribing: %s", path)
     notifier.notify("文字起こし開始", path.name)
     callback = progress.make_milestone_callback(path.name)
-    result = transcriber.transcribe(path, cfg.model, cfg.language, progress_callback=callback)
+    result = transcriber.transcribe(
+        path, cfg.model, cfg.language, progress_callback=callback, vad=cfg.vad, mixed=cfg.mixed
+    )
     output_path = file_naming.resolve_output_path(path)
     markdown_writer.write(result, output_path)
     notifier.notify("文字起こし完了", f"{path.name} → {output_path.name}")
