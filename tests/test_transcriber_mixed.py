@@ -454,3 +454,68 @@ def test_single_language_passes_vad_options(monkeypatch):
     cfg = VadConfig(enabled=True, threshold=0.3, min_silence_ms=800, speech_pad_ms=400)
     transcriber.transcribe(Path("x.wav"), "medium", "ja", vad=cfg)
     assert seen == {"threshold": 0.3, "min_silence_ms": 800, "speech_pad_ms": 400}
+
+
+def test_transcribe_collapses_repeated_phrases(monkeypatch):
+    def fake_transcribe(_audio, **_kw):
+        return {"segments": [{"start": 0.0, "end": 5.0, "text": "冒頭" + "お客様の" * 8 + "。"}]}
+
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe", fake_transcribe, raising=False)
+    result = transcriber.transcribe(Path("x.wav"), "medium", "ja", vad=VadConfig(enabled=False))
+    assert [s.text for s in result.segments] == ["冒頭お客様の[反復省略]。"]
+
+
+def test_identical_sentence_blocks_are_collapsed_keeping_span(monkeypatch):
+    looped = [{"start": i * 2.0, "end": i * 2.0 + 2.0, "text": "ご視聴ありがとうございました。"} for i in range(8)]
+    tail = [{"start": 20.0, "end": 21.0, "text": "はい。"}, {"start": 22.0, "end": 23.0, "text": "はい。"}]
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe",
+                        lambda _a, **_kw: {"segments": looped + tail}, raising=False)
+    result = transcriber.transcribe(Path("x.wav"), "medium", "ja", vad=VadConfig(enabled=False))
+    assert [(s.start_sec, s.end_sec, s.text) for s in result.segments] == [
+        (0.0, 16.0, "ご視聴ありがとうございました。[反復省略]"),
+        (20.0, 21.0, "はい。"),
+        (22.0, 23.0, "はい。"),
+    ]
+
+
+def test_looping_ja_retry_does_not_win_on_length(monkeypatch):
+    en = {"segments": [{"start": 0.0, "end": 10.0, "text": "Okay, let us start the review now."}]}
+    ja = {"segments": [{"start": 0.0, "end": 10.0, "text": "お客様の" * 30}]}
+    assert transcriber._text_len(ja) < transcriber._text_len(en)
+
+
+@pytest.mark.parametrize(("repeats", "collapsed"), [(4, False), (5, True)])
+def test_identical_block_threshold(monkeypatch, repeats, collapsed):
+    segs = [{"start": i * 2.0, "end": i * 2.0 + 1.0, "text": "ありがとうございます。"} for i in range(repeats)]
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe",
+                        lambda _a, **_kw: {"segments": segs}, raising=False)
+    result = transcriber.transcribe(Path("x.wav"), "medium", "ja", vad=VadConfig(enabled=False))
+    assert (len(result.segments) == 1) == collapsed
+
+
+def test_silence_hallucinations_are_dropped_but_real_thanks_kept(monkeypatch):
+    segs = [
+        # window 0: real speech, so its stretched closing remark is kept
+        {"seek": 0, "start": 0.0, "end": 3.0, "text": "本日は以上です。", "no_speech_prob": 0.7},
+        {"seek": 0, "start": 3.0, "end": 30.0, "text": "ありがとうございました。", "no_speech_prob": 0.7},
+        # window 3000: only a stock phrase over a long span
+        {"seek": 3000, "start": 30.0, "end": 60.0, "text": "ご視聴ありがとうございました", "no_speech_prob": 0.2},
+        # window 6000: a short real remark in a confident window
+        {"seek": 6000, "start": 60.0, "end": 62.0, "text": "お疲れ様でした。", "no_speech_prob": 0.1},
+        # window 9000: a short stock phrase in a window judged silent
+        {"seek": 9000, "start": 90.0, "end": 91.0, "text": "Thank you.", "no_speech_prob": 0.9},
+    ]
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe",
+                        lambda _a, **_kw: {"segments": segs}, raising=False)
+    result = transcriber.transcribe(Path("x.wav"), "medium", "ja", vad=VadConfig(enabled=False))
+    assert [s.text for s in result.segments] == ["本日は以上です。", "ありがとうございました。", "お疲れ様でした。"]
+
+
+def test_hallucination_span_is_measured_before_remap(monkeypatch, fake_audio):
+    # mixed groups concatenate intervals; this 3.5 s remark remaps to 4.0-12.5 s (8.5 s)
+    monkeypatch.setattr(transcriber, "_detect_ja_en", lambda pcm, repo: {"ja": 0.9, "en": 0.05})
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe", lambda pcm, **_kw: {"segments": [
+        {"seek": 0, "start": 4.0, "end": 7.5, "text": "お疲れ様でした。", "no_speech_prob": 0.1},
+    ]}, raising=False)
+    result = transcriber.transcribe(Path("x.wav"), "large-v3-turbo", "mixed")
+    assert [s.text for s in result.segments] == ["お疲れ様でした。"]

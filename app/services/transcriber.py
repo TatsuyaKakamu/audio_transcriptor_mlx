@@ -26,7 +26,12 @@ _MAX_DETECT_FAILURES = 3
 # Empty output is not retried: ja decoding of noise tends to hallucinate stock phrases.
 _EN_RETRY_MIN_SEC = 3.0
 _EN_RETRY_MAX_CHARS_PER_SEC = 3.0
+_MIN_IDENTICAL_BLOCKS = 5
 
+# A single temperature skips mlx-whisper's fallback re-decoding. Enabling it
+# ((0.0, 0.2, 0.4) with compression_ratio_threshold=2.4) cost ~35% more time on a
+# 2 h meeting and recovered only ~2% text, so loops are collapsed afterwards instead
+# (_collapse_loops).
 _DECODE_OPTIONS = {
     "temperature": 0.0,
     "condition_on_previous_text": False,
@@ -75,6 +80,7 @@ def transcribe(
 
     from app.services.segment_merger import merge_by_conversation
     segments = merge_by_conversation(segments, language=language)
+    segments = _collapse_loops(segments)
     return TranscriptionResult(
         source_path=source_path,
         language=language,
@@ -284,8 +290,45 @@ def _transcribe_mixed(
     return segments
 
 
+def _collapse_loops(segments: list[Segment]) -> list[Segment]:
+    # Whisper can loop on one phrase; keep one copy and mark the rest.
+    from app.services.repetition import MARKER, collapse_repetitions
+
+    collapsed = 0
+    out: list[Segment] = []
+    for seg in segments:
+        text = collapse_repetitions(seg.text)
+        collapsed += text != seg.text
+        out.append(Segment(start_sec=seg.start_sec, end_sec=seg.end_sec, text=text))
+
+    # A looped sentence ending in "。" becomes one block per repeat, so also
+    # collapse runs of identical consecutive blocks. People do repeat a whole
+    # sentence ("ありがとうございます。") a few times, so this needs a longer run.
+    merged: list[Segment] = []
+    i = 0
+    while i < len(out):
+        j = i + 1
+        while j < len(out) and out[j].text == out[i].text:
+            j += 1
+        if j - i >= _MIN_IDENTICAL_BLOCKS:
+            text = out[i].text.strip()
+            if MARKER not in text:
+                text += MARKER
+            merged.append(Segment(out[i].start_sec, out[j - 1].end_sec, text))
+            collapsed += 1
+        else:
+            merged.extend(out[i:j])
+        i = j
+    if collapsed:
+        logger.info("collapsed repeated phrases in %d places", collapsed)
+    return merged
+
+
 def _text_len(result: dict) -> int:
-    return sum(len(seg.get("text", "").strip()) for seg in result.get("segments", []))
+    # Count looped text once so a looping retry does not win on length alone.
+    from app.services.repetition import collapse_repetitions
+
+    return sum(len(collapse_repetitions(seg.get("text", "").strip())) for seg in result.get("segments", []))
 
 
 def _looks_too_sparse(result: dict, duration_sec: float) -> bool:
@@ -299,19 +342,35 @@ def normalize_segments(
     result: dict,
     kept_intervals: list[tuple[float, float]] | None = None,
 ) -> list[Segment]:
+    from app.services.hallucination import is_silence_hallucination, is_stock_only
     from app.services.vad import remap_timestamp
 
     raw = result.get("segments", [])
+    # mlx-whisper tags each segment with the window (seek) it was decoded from.
+    windows_with_speech = {
+        seg.get("seek", ("no-seek", i))
+        for i, seg in enumerate(raw)
+        if seg.get("text", "").strip() and not is_stock_only(seg.get("text", ""))
+    }
     segments: list[Segment] = []
-    for seg in raw:
+    dropped = 0
+    for i, seg in enumerate(raw):
         text = seg.get("text", "").replace("\n", " ").strip()
         if not text:
             continue
         start = float(seg.get("start", 0.0))
         end = float(seg.get("end", 0.0))
+        # Judge on the span before remapping: with VAD or mixed groups Whisper heard
+        # concatenated speech, and remapping would stretch it over the removed gaps.
+        if is_silence_hallucination(text, end - start, float(seg.get("no_speech_prob", 0.0)),
+                                    seg.get("seek", ("no-seek", i)) in windows_with_speech):
+            dropped += 1
+            continue
         if kept_intervals is not None:
             start = remap_timestamp(start, kept_intervals)
             end = remap_timestamp(end, kept_intervals)
         segments.append(Segment(start_sec=start, end_sec=end, text=text))
+    if dropped:
+        logger.info("dropped %d stock-phrase segments decoded from silence", dropped)
     segments.sort(key=lambda s: s.start_sec)
     return segments
