@@ -342,19 +342,35 @@ def normalize_segments(
     result: dict,
     kept_intervals: list[tuple[float, float]] | None = None,
 ) -> list[Segment]:
+    from app.services.hallucination import is_silence_hallucination, is_stock_only
     from app.services.vad import remap_timestamp
 
     raw = result.get("segments", [])
+    # mlx-whisper tags each segment with the window (seek) it was decoded from.
+    windows_with_speech = {
+        seg.get("seek", ("no-seek", i))
+        for i, seg in enumerate(raw)
+        if seg.get("text", "").strip() and not is_stock_only(seg.get("text", ""))
+    }
     segments: list[Segment] = []
-    for seg in raw:
+    dropped = 0
+    for i, seg in enumerate(raw):
         text = seg.get("text", "").replace("\n", " ").strip()
         if not text:
             continue
         start = float(seg.get("start", 0.0))
         end = float(seg.get("end", 0.0))
+        # Judge on the span before remapping: with VAD or mixed groups Whisper heard
+        # concatenated speech, and remapping would stretch it over the removed gaps.
+        if is_silence_hallucination(text, end - start, float(seg.get("no_speech_prob", 0.0)),
+                                    seg.get("seek", ("no-seek", i)) in windows_with_speech):
+            dropped += 1
+            continue
         if kept_intervals is not None:
             start = remap_timestamp(start, kept_intervals)
             end = remap_timestamp(end, kept_intervals)
         segments.append(Segment(start_sec=start, end_sec=end, text=text))
+    if dropped:
+        logger.info("dropped %d stock-phrase segments decoded from silence", dropped)
     segments.sort(key=lambda s: s.start_sec)
     return segments

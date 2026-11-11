@@ -63,6 +63,9 @@ VAD は既定で無効（`config.VadConfig.enabled = False`）。silero VAD が�
 ### 反復の抑止
 Whisper が同じ語句をループして出力する対策は後処理で行う。`temperature` は 0.0 の単一値のまま（mlx-whisper の解き直しは使わない）。解き直し（`(0.0, 0.2, 0.4)` と `compression_ratio_threshold=2.4`）は 2 時間超の会議で処理時間が約 35% 増え、取り戻せた発言は約 2% だったため見送った。ループは `services/repetition.collapse_repetitions()` が会話ブロック単位で 1 回分に縮めて `[反復省略]` を付け、`_collapse_loops()` が同一テキストのブロックが 5 個以上続く場合（句点つきの文のループ）も 1 ブロックにまとめる。1 文字の単位は 10 回以上、4 文字未満は 10 回以上、10 文字未満は 5 回以上、10 文字以上の節は 3 回以上、文字を含まない単位（`、54` など。`ー〜` は文字扱いしない）は 10 回以上（1 文字なら 30 回以上）で縮める（「はい、はい」「えーーー」「1000000」を守るため）。mixed の en→ja 再試行の長さ比較（`_text_len`）も縮めた後の長さで行う。
 
+### 無音区間の定型句（幻聴）
+Whisper は音の無い区間に「ご視聴ありがとうございました」「Thank you.」などの定型句を書き込む。`transcriber.normalize_segments()` が `services/hallucination.is_silence_hallucination()` でセグメント単位に判定し、捨てた数をログに出す。条件は 3 つ。(1) 本文が `STOCK_PHRASES` だけ（NFKC 正規化し、句読点・空白・`…〜ー` などは無視。同じ句の繰り返しも含む）。(2) 同じ 30 秒窓（セグメントの `seek`）に定型句以外の発言が無い。(3) 区間が 8 秒以上、または `no_speech_prob` が 0.6 以上。(2) が要るのは、`no_speech_prob` が窓ごとに 1 つの値で窓内の全セグメントに付くためと、窓末尾の本物の挨拶が窓の終わりまで引き伸ばされることがあるため。本物の挨拶は 2 秒前後なので、多くは残る。ただし、窓に挨拶しか無く無音と判定された場合は消えうる。音声側（VAD）では切らない（VAD は小さい声ごと発話を捨てた前例がある）。区間の長さは時刻の再マッピング前の値で測る（VAD や mixed のグループは発話を連結して渡すため、再マッピング後は削った無音の分だけ伸びる）。
+
 ### 通知
 `services/notifier.py` は `osascript` を `subprocess.run` で実行し、失敗は黙殺する。`transcriber.transcribe()` は `tqdm.tqdm` クラスを一時差し替えて `update()` フックからコールバックへ渡す。CLI 経路は開始・進捗（25/50/75%）・完了の 3 段階で通知する。GUI 経路（`TranscriptionWorker`）は完了時のみ通知する。議事録生成・PR 作成それぞれも「〜中…」「〜完了」「〜失敗」の 3 段階を通知する。
 
@@ -93,4 +96,4 @@ Whisper が同じ語句をループして出力する対策は後処理で行う
 
 `transcriber.py` の mixed 経路は `vad._load_audio` / `vad.detect_speech_intervals` / `_detect_ja_en` / `mlx_whisper.transcribe` を monkeypatch してテストする。実際の mlx-whisper / silero_vad の推論はテスト対象外。
 
-テストファイル: `test_file_naming.py`, `test_markdown_writer.py`, `test_segment_merger.py`, `test_config.py`, `test_cli_scan.py`, `test_notifier.py`, `test_progress.py`, `test_minutes_generator.py`, `test_minutes_orchestrator.py`, `test_minutes_writer.py`, `test_auto_pr.py`, `test_vad.py`, `test_mixed_language.py`, `test_transcriber_mixed.py`, `test_repetition.py`
+テストファイル: `test_file_naming.py`, `test_markdown_writer.py`, `test_segment_merger.py`, `test_config.py`, `test_cli_scan.py`, `test_notifier.py`, `test_progress.py`, `test_minutes_generator.py`, `test_minutes_orchestrator.py`, `test_minutes_writer.py`, `test_auto_pr.py`, `test_vad.py`, `test_mixed_language.py`, `test_transcriber_mixed.py`, `test_repetition.py`, `test_hallucination.py`

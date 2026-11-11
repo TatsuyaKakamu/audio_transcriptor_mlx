@@ -491,3 +491,31 @@ def test_identical_block_threshold(monkeypatch, repeats, collapsed):
                         lambda _a, **_kw: {"segments": segs}, raising=False)
     result = transcriber.transcribe(Path("x.wav"), "medium", "ja", vad=VadConfig(enabled=False))
     assert (len(result.segments) == 1) == collapsed
+
+
+def test_silence_hallucinations_are_dropped_but_real_thanks_kept(monkeypatch):
+    segs = [
+        # window 0: real speech, so its stretched closing remark is kept
+        {"seek": 0, "start": 0.0, "end": 3.0, "text": "本日は以上です。", "no_speech_prob": 0.7},
+        {"seek": 0, "start": 3.0, "end": 30.0, "text": "ありがとうございました。", "no_speech_prob": 0.7},
+        # window 3000: only a stock phrase over a long span
+        {"seek": 3000, "start": 30.0, "end": 60.0, "text": "ご視聴ありがとうございました", "no_speech_prob": 0.2},
+        # window 6000: a short real remark in a confident window
+        {"seek": 6000, "start": 60.0, "end": 62.0, "text": "お疲れ様でした。", "no_speech_prob": 0.1},
+        # window 9000: a short stock phrase in a window judged silent
+        {"seek": 9000, "start": 90.0, "end": 91.0, "text": "Thank you.", "no_speech_prob": 0.9},
+    ]
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe",
+                        lambda _a, **_kw: {"segments": segs}, raising=False)
+    result = transcriber.transcribe(Path("x.wav"), "medium", "ja", vad=VadConfig(enabled=False))
+    assert [s.text for s in result.segments] == ["本日は以上です。", "ありがとうございました。", "お疲れ様でした。"]
+
+
+def test_hallucination_span_is_measured_before_remap(monkeypatch, fake_audio):
+    # mixed groups concatenate intervals; this 3.5 s remark remaps to 4.0-12.5 s (8.5 s)
+    monkeypatch.setattr(transcriber, "_detect_ja_en", lambda pcm, repo: {"ja": 0.9, "en": 0.05})
+    monkeypatch.setattr(transcriber.mlx_whisper, "transcribe", lambda pcm, **_kw: {"segments": [
+        {"seek": 0, "start": 4.0, "end": 7.5, "text": "お疲れ様でした。", "no_speech_prob": 0.1},
+    ]}, raising=False)
+    result = transcriber.transcribe(Path("x.wav"), "large-v3-turbo", "mixed")
+    assert [s.text for s in result.segments] == ["お疲れ様でした。"]
